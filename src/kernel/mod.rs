@@ -19,6 +19,8 @@
  * limitations under the License.
  */
 
+use generic_array::{ArrayLength, GenericArray, typenum::U127};
+
 /// Kernels based on x86-64 intrinsics.
 #[cfg(target_arch = "x86_64")]
 pub mod x86;
@@ -78,24 +80,31 @@ pub(crate) fn torben_median(m: &[f32]) -> f32 {
 
 /// Compute kernel for doing heavy-duty transformations.
 ///
-/// A pure-Rust implementation is provided in `DefaultKernel`.
+/// A scalar (auto-vectorized) implementation is provided in `DefaultKernel`.
 pub trait Kernel: Send + Sized {
+    /// The width of the first stage (compression) buffer.
+    type Buffer1WidthX: ArrayLength;
+    /// The length of the first stage (compression) buffer.
+    type Buffer1LengthY: ArrayLength;
+
     /// Apply a tent-filter average to every 8x8 sub-block of the input buffer and write the result of each sub-block to the output buffer.
-    fn jarosz_compress(&mut self, buffer: &[f32; 512 * 512], output: &mut [f32; 64 * 64]) {
-        for outi in 0..64 {
-            let in_i = CONVOLUTION_OFFSET_512_TO_64[outi] - TENT_FILTER_COLUMN_OFFSET;
-            for outj in 0..64 {
-                let in_j = CONVOLUTION_OFFSET_512_TO_64[outj] - TENT_FILTER_COLUMN_OFFSET;
+    fn jarosz_compress(
+        &mut self,
+        buffer: &[f32; 512 * 512],
+        output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
+        for outi in 0..127 {
+            let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
+            for outj in 0..127 {
+                let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                 let mut sum = 0.0;
                 for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
                     for dj in 0..TENT_FILTER_EFFECTIVE_COLS {
-                        sum += TENT_FILTER_WEIGHTS
-                            [CONVOLUTION_LOOKUP_TABLE_INDEX[outi * 64 + outj] as usize]
-                            [di * TENT_FILTER_EFFECTIVE_COLS + dj]
+                        sum += TENT_FILTER_WEIGHTS[di * TENT_FILTER_EFFECTIVE_COLS + dj]
                             * buffer[(in_i + di) * 512 + (in_j + dj)];
                     }
                 }
-                output[outi * 64 + outj] = sum;
+                output[outi][outj] = sum;
             }
         }
     }
@@ -140,20 +149,31 @@ pub trait Kernel: Send + Sized {
     }
 
     /// Apply a 2D DCT-II transformation to the input buffer write the result to the output buffer.
-    fn dct2d(&mut self, _buffer: &[f32; 64 * 64], _output: &mut [f32; 16 * 16]);
+    fn dct2d(
+        &mut self,
+        _buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        _output: &mut [f32; 16 * 16],
+    );
 }
 
 /// A pure-Rust implementation of the `Kernel` trait.
 pub struct DefaultKernel;
 
 impl Kernel for DefaultKernel {
-    fn dct2d(&mut self, buffer: &[f32; 64 * 64], output: &mut [f32; 16 * 16]) {
+    type Buffer1WidthX = U127;
+    type Buffer1LengthY = U127;
+
+    fn dct2d(
+        &mut self,
+        buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        output: &mut [f32; 16 * 16],
+    ) {
         for k in 0..16 {
-            let mut tmp = [0.0; 64];
-            for j in 0..64 {
+            let mut tmp = [0.0; 127];
+            for j in 0..127 {
                 let mut sumk = 0.0;
-                for k2 in 0..64 {
-                    sumk += DCT_MATRIX_RMAJOR[k * DCT_MATRIX_NCOLS + k2] * buffer[k2 * 64 + j];
+                for k2 in 0..127 {
+                    sumk += DCT_MATRIX_RMAJOR[k * DCT_MATRIX_NCOLS + k2] * buffer[k2][j];
                 }
 
                 tmp[j] = sumk;
@@ -179,13 +199,20 @@ impl PreciseKernel for ReferenceKernel {}
 
 #[cfg(any(feature = "std", test))]
 impl Kernel for ReferenceKernel {
-    fn dct2d(&mut self, buffer: &[f32; 64 * 64], output: &mut [f32; 16 * 16]) {
-        let mut intermediate_matrix = [[0.0; 64]; 16];
+    type Buffer1WidthX = U127;
+    type Buffer1LengthY = U127;
+
+    fn dct2d(
+        &mut self,
+        buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        output: &mut [f32; 16 * 16],
+    ) {
+        let mut intermediate_matrix = [[0.0; 127]; 16];
         for i in 0..16 {
-            for j in 0..64 {
+            for j in 0..127 {
                 let mut sumk = 0.0;
-                for k in 0..64 {
-                    sumk += DCT_MATRIX_RMAJOR[i * DCT_MATRIX_NCOLS + k] * buffer[k * 64 + j];
+                for k in 0..127 {
+                    sumk += DCT_MATRIX_RMAJOR[i * DCT_MATRIX_NCOLS + k] * buffer[k][j];
                 }
 
                 intermediate_matrix[i][j] = sumk;
@@ -195,7 +222,7 @@ impl Kernel for ReferenceKernel {
         for i in 0..16 {
             for j in 0..16 {
                 let mut sumk = 0.0;
-                for k in 0..64 {
+                for k in 0..127 {
                     sumk += intermediate_matrix[i][k] * DCT_MATRIX_RMAJOR[j * DCT_MATRIX_NCOLS + k];
                 }
                 output[i * 16 + j] = sumk;
@@ -218,13 +245,17 @@ impl Kernel for ReferenceKernel {
         }
     }
 
-    fn jarosz_compress(&mut self, buffer: &[f32; 512 * 512], output: &mut [f32; 64 * 64]) {
+    fn jarosz_compress(
+        &mut self,
+        buffer: &[f32; 512 * 512],
+        output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
         #[allow(missing_docs, dead_code)]
         mod reference {
             include!("ref.rs");
         }
 
-        let window_size = reference::compute_jarosz_filter_window_size(512, 64);
+        let window_size = reference::compute_jarosz_filter_window_size(512, 127);
         let mut buffer = buffer.to_vec();
         reference::jarosz_filter_float(
             buffer.as_mut_slice().try_into().unwrap(),
@@ -271,10 +302,22 @@ mod tests {
 
     fn test_dct64_impl<K: Kernel>(kernel: &mut K) {
         let mut rng = rand::rng();
-        let input = core::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input_ref: GenericArray<GenericArray<f32, U127>, U127> = GenericArray::default();
+        input_ref.iter_mut().for_each(|row| {
+            row.iter_mut()
+                .for_each(|val| *val = rng.random_range(0.0..1.0));
+        });
+        let mut input: GenericArray<GenericArray<f32, K::Buffer1WidthX>, K::Buffer1LengthY> =
+            GenericArray::default();
+        for i in 0..127 {
+            for j in 0..127 {
+                input[i][j] = input_ref[i][j];
+            }
+        }
+
         let mut output = [0.0; 16 * 16];
         let mut output_ref = [0.0; 16 * 16];
-        ReferenceKernel.dct2d(&input, &mut output_ref);
+        ReferenceKernel.dct2d(&input_ref, &mut output_ref);
 
         kernel.dct2d(&input, &mut output);
 

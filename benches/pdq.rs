@@ -3,17 +3,28 @@ use rand::Rng;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
-use yume_pdq::kernel::{DefaultKernel, Kernel, x86};
+use yume_pdq::{
+    GenericArray,
+    kernel::{DefaultKernel, Kernel, x86},
+};
 
 fn bench_dct2d(c: &mut Criterion) {
     let mut rng = rand::rng();
 
     let mut group = c.benchmark_group("dct2d");
 
-    group.throughput(criterion::Throughput::Bytes(64 * 64));
+    group.throughput(criterion::Throughput::Bytes(127 * 127));
 
     group.bench_function("scalar", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input: GenericArray<
+            GenericArray<f32, <DefaultKernel as Kernel>::Buffer1WidthX>,
+            <DefaultKernel as Kernel>::Buffer1LengthY,
+        > = GenericArray::default();
+        for i in 0..127 {
+            for j in 0..127 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = DefaultKernel;
         b.iter(|| {
             let mut output = [0.0; 16 * 16];
@@ -24,7 +35,15 @@ fn bench_dct2d(c: &mut Criterion) {
 
     #[cfg(feature = "std")]
     group.bench_function("reference", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input: GenericArray<
+            GenericArray<f32, <yume_pdq::kernel::ReferenceKernel as Kernel>::Buffer1WidthX>,
+            <yume_pdq::kernel::ReferenceKernel as Kernel>::Buffer1LengthY,
+        > = GenericArray::default();
+        for i in 0..127 {
+            for j in 0..127 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = yume_pdq::kernel::ReferenceKernel;
         b.iter(|| {
             let mut output = [0.0; 16 * 16];
@@ -34,7 +53,15 @@ fn bench_dct2d(c: &mut Criterion) {
     });
 
     group.bench_function("avx2", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input: GenericArray<
+            GenericArray<f32, <x86::Avx2F32Kernel as Kernel>::Buffer1WidthX>,
+            <x86::Avx2F32Kernel as Kernel>::Buffer1LengthY,
+        > = GenericArray::default();
+        for i in 0..127 {
+            for j in 0..127 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = x86::Avx2F32Kernel;
         b.iter(|| {
             let mut output = [0.0; 16 * 16];
@@ -45,7 +72,15 @@ fn bench_dct2d(c: &mut Criterion) {
 
     #[cfg(feature = "avx512")]
     group.bench_function("avx512", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input: GenericArray<
+            GenericArray<f32, <x86::Avx512F32Kernel as Kernel>::Buffer1WidthX>,
+            <x86::Avx512F32Kernel as Kernel>::Buffer1LengthY,
+        > = GenericArray::default();
+        for i in 0..127 {
+            for j in 0..127 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = x86::Avx512F32Kernel;
         b.iter(|| {
             let mut output = [0.0; 16 * 16];
@@ -68,7 +103,7 @@ fn bench_jarosz_compress(c: &mut Criterion) {
         let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
         let mut kernel = yume_pdq::kernel::ReferenceKernel;
         b.iter(|| {
-            let mut output = [0.0; 64 * 64];
+            let mut output = GenericArray::default();
             kernel.jarosz_compress(&input, &mut output);
             output
         });
@@ -78,7 +113,7 @@ fn bench_jarosz_compress(c: &mut Criterion) {
         let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
         let mut kernel = DefaultKernel;
         b.iter(|| {
-            let mut output = [0.0; 64 * 64];
+            let mut output = GenericArray::default();
             kernel.jarosz_compress(&input, &mut output);
             output
         });
@@ -88,7 +123,7 @@ fn bench_jarosz_compress(c: &mut Criterion) {
         let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
         let mut kernel = x86::Avx2F32Kernel;
         b.iter(|| {
-            let mut output = [0.0; 64 * 64];
+            let mut output = GenericArray::default();
             kernel.jarosz_compress(&input, &mut output);
             output
         });
@@ -165,7 +200,7 @@ fn bench_hash(c: &mut Criterion) {
         let mut kernel = yume_pdq::kernel::ReferenceKernel;
         b.iter(|| {
             let mut output = [0; 2 * 16];
-            let mut buf1 = [0.0; 64 * 64];
+            let mut buf1 = GenericArray::default();
             let mut buf2 = [0.0; 16 * 16];
             yume_pdq::hash(
                 &mut kernel,
@@ -186,7 +221,7 @@ fn bench_hash(c: &mut Criterion) {
         let mut kernel = DefaultKernel;
         b.iter(|| {
             let mut output = [0; 2 * 16];
-            let mut buf1 = [0.0; 64 * 64];
+            let mut buf1 = GenericArray::default();
             let mut buf2 = [0.0; 16 * 16];
             yume_pdq::hash(
                 &mut kernel,
@@ -207,7 +242,7 @@ fn bench_hash(c: &mut Criterion) {
         let mut kernel = x86::Avx2F32Kernel;
         b.iter(|| {
             let mut output = [0; 2 * 16];
-            let mut buf1 = [0.0; 64 * 64];
+            let mut buf1 = GenericArray::default();
             let mut buf2 = [0.0; 16 * 16];
             yume_pdq::hash(
                 &mut kernel,
@@ -229,7 +264,7 @@ fn bench_hash(c: &mut Criterion) {
         let mut kernel = x86::Avx512F32Kernel;
         b.iter(|| {
             let mut output = [0; 2 * 16];
-            let mut buf1 = [0.0; 64 * 64];
+            let mut buf1 = GenericArray::default();
             let mut buf2 = [0.0; 16 * 16];
             yume_pdq::hash(
                 &mut kernel,
@@ -243,155 +278,157 @@ fn bench_hash(c: &mut Criterion) {
     });
 }
 
-fn bench_hashx4(c: &mut Criterion) {
+fn bench_hash_par(c: &mut Criterion) {
     let mut rng = rand::rng();
 
     const INPUT_PER_ROUND: usize = 48;
 
-    let mut group = c.benchmark_group("hashx4");
+    for (nt, name) in [(4, "hashx4"), (8, "hashx8")] {
+        let mut group = c.benchmark_group(name);
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .stack_size(4 << 20)
-        .build()
-        .unwrap();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(nt)
+            .stack_size(8 << 20)
+            .build()
+            .unwrap();
 
-    group.throughput(criterion::Throughput::Bytes(
-        INPUT_PER_ROUND as u64 * 512 * 512 * std::mem::size_of::<f32>() as u64,
-    ));
+        group.throughput(criterion::Throughput::Bytes(
+            INPUT_PER_ROUND as u64 * 512 * 512 * std::mem::size_of::<f32>() as u64,
+        ));
 
-    group.bench_function("reference", |b| {
-        let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
-            let mut input = Vec::with_capacity(512 * 512);
-            for _ in 0..(512 * 512) {
-                input.push(rng.random_range(0.0..1.0));
-            }
-            input
-        });
-
-        b.iter(|| {
-            let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
-                std::array::from_fn(|_| Box::new([0; 2 * 16]));
-            pool.install(|| {
-                inputs
-                    .par_iter()
-                    .zip(outputs.par_iter_mut())
-                    .for_each(|(input, output)| {
-                        let mut kernel = yume_pdq::kernel::ReferenceKernel;
-                        let mut buf1 = [0.0; 64 * 64];
-                        let mut buf2 = [0.0; 16 * 16];
-                        yume_pdq::hash(
-                            &mut kernel,
-                            &input.as_slice().try_into().unwrap(),
-                            output,
-                            &mut buf1,
-                            &mut buf2,
-                        );
-                    });
+        group.bench_function("reference", |b| {
+            let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
+                let mut input = Vec::with_capacity(512 * 512);
+                for _ in 0..(512 * 512) {
+                    input.push(rng.random_range(0.0..1.0));
+                }
+                input
             });
-            outputs
-        });
-    });
 
-    group.bench_function("scalar", |b| {
-        let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
-            let mut input = Vec::with_capacity(512 * 512);
-            for _ in 0..(512 * 512) {
-                input.push(rng.random_range(0.0..1.0));
-            }
-            input
-        });
-
-        b.iter(|| {
-            let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
-                std::array::from_fn(|_| Box::new([0; 2 * 16]));
-            pool.install(|| {
-                inputs
-                    .par_iter()
-                    .zip(outputs.par_iter_mut())
-                    .for_each(|(input, output)| {
-                        let mut kernel = DefaultKernel;
-                        let mut buf1 = [0.0; 64 * 64];
-                        let mut buf2 = [0.0; 16 * 16];
-                        yume_pdq::hash(
-                            &mut kernel,
-                            &input.as_slice().try_into().unwrap(),
-                            output,
-                            &mut buf1,
-                            &mut buf2,
-                        );
-                    });
+            b.iter(|| {
+                let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
+                    std::array::from_fn(|_| Box::new([0; 2 * 16]));
+                pool.install(|| {
+                    inputs
+                        .par_iter()
+                        .zip(outputs.par_iter_mut())
+                        .for_each(|(input, output)| {
+                            let mut kernel = yume_pdq::kernel::ReferenceKernel;
+                            let mut buf1 = GenericArray::default();
+                            let mut buf2 = [0.0; 16 * 16];
+                            yume_pdq::hash(
+                                &mut kernel,
+                                &input.as_slice().try_into().unwrap(),
+                                output,
+                                &mut buf1,
+                                &mut buf2,
+                            );
+                        });
+                });
+                outputs
             });
-            outputs
-        });
-    });
-
-    group.bench_function("avx2", |b| {
-        let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
-            let mut input = Vec::with_capacity(512 * 512);
-            for _ in 0..(512 * 512) {
-                input.push(rng.random_range(0.0..1.0));
-            }
-            input
         });
 
-        b.iter(|| {
-            let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
-                std::array::from_fn(|_| Box::new([0; 2 * 16]));
-            pool.install(|| {
-                inputs
-                    .par_iter()
-                    .zip(outputs.par_iter_mut())
-                    .for_each(|(input, output)| {
-                        let mut kernel = x86::Avx2F32Kernel;
-                        let mut buf1 = [0.0; 64 * 64];
-                        let mut buf2 = [0.0; 16 * 16];
-                        yume_pdq::hash(
-                            &mut kernel,
-                            &input.as_slice().try_into().unwrap(),
-                            output,
-                            &mut buf1,
-                            &mut buf2,
-                        );
-                    });
+        group.bench_function("scalar", |b| {
+            let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
+                let mut input = Vec::with_capacity(512 * 512);
+                for _ in 0..(512 * 512) {
+                    input.push(rng.random_range(0.0..1.0));
+                }
+                input
             });
-            outputs
-        });
-    });
 
-    #[cfg(feature = "avx512")]
-    group.bench_function("avx512", |b| {
-        let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
-            let mut input = Vec::with_capacity(512 * 512);
-            for _ in 0..(512 * 512) {
-                input.push(rng.random_range(0.0..1.0));
-            }
-            input
-        });
-
-        b.iter(|| {
-            let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
-                std::array::from_fn(|_| Box::new([0; 2 * 16]));
-            pool.install(|| {
-                inputs
-                    .par_iter()
-                    .zip(outputs.par_iter_mut())
-                    .for_each(|(input, output)| {
-                        let mut kernel = x86::Avx512F32Kernel;
-                        let mut buf1 = [0.0; 64 * 64];
-                        let mut buf2 = [0.0; 16 * 16];
-                        yume_pdq::hash(
-                            &mut kernel,
-                            &input.as_slice().try_into().unwrap(),
-                            output,
-                            &mut buf1,
-                            &mut buf2,
-                        );
-                    });
+            b.iter(|| {
+                let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
+                    std::array::from_fn(|_| Box::new([0; 2 * 16]));
+                pool.install(|| {
+                    inputs
+                        .par_iter()
+                        .zip(outputs.par_iter_mut())
+                        .for_each(|(input, output)| {
+                            let mut kernel = DefaultKernel;
+                            let mut buf1 = GenericArray::default();
+                            let mut buf2 = [0.0; 16 * 16];
+                            yume_pdq::hash(
+                                &mut kernel,
+                                &input.as_slice().try_into().unwrap(),
+                                output,
+                                &mut buf1,
+                                &mut buf2,
+                            );
+                        });
+                });
+                outputs
             });
-            outputs
         });
-    });
+
+        group.bench_function("avx2", |b| {
+            let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
+                let mut input = Vec::with_capacity(512 * 512);
+                for _ in 0..(512 * 512) {
+                    input.push(rng.random_range(0.0..1.0));
+                }
+                input
+            });
+
+            b.iter(|| {
+                let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
+                    std::array::from_fn(|_| Box::new([0; 2 * 16]));
+                pool.install(|| {
+                    inputs
+                        .par_iter()
+                        .zip(outputs.par_iter_mut())
+                        .for_each(|(input, output)| {
+                            let mut kernel = x86::Avx2F32Kernel;
+                            let mut buf1 = GenericArray::default();
+                            let mut buf2 = [0.0; 16 * 16];
+                            yume_pdq::hash(
+                                &mut kernel,
+                                &input.as_slice().try_into().unwrap(),
+                                output,
+                                &mut buf1,
+                                &mut buf2,
+                            );
+                        });
+                });
+                outputs
+            });
+        });
+
+        #[cfg(feature = "avx512")]
+        group.bench_function("avx512", |b| {
+            let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
+                let mut input = Vec::with_capacity(512 * 512);
+                for _ in 0..(512 * 512) {
+                    input.push(rng.random_range(0.0..1.0));
+                }
+                input
+            });
+
+            b.iter(|| {
+                let mut outputs: [Box<[u8; 2 * 16]>; INPUT_PER_ROUND] =
+                    std::array::from_fn(|_| Box::new([0; 2 * 16]));
+                pool.install(|| {
+                    inputs
+                        .par_iter()
+                        .zip(outputs.par_iter_mut())
+                        .for_each(|(input, output)| {
+                            let mut kernel = x86::Avx512F32Kernel;
+                            let mut buf1 = GenericArray::default();
+                            let mut buf2 = [0.0; 16 * 16];
+                            yume_pdq::hash(
+                                &mut kernel,
+                                &input.as_slice().try_into().unwrap(),
+                                output,
+                                &mut buf1,
+                                &mut buf2,
+                            );
+                        });
+                });
+                outputs
+            });
+        });
+    }
 }
 
 criterion_group!(
@@ -401,6 +438,6 @@ criterion_group!(
     bench_quantize,
     bench_sum_of_gradients,
     bench_hash,
-    bench_hashx4
+    bench_hash_par
 );
 criterion_main!(benches);

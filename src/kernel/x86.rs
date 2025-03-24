@@ -24,12 +24,13 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
+use generic_array::{GenericArray, typenum::U128};
+
 use crate::kernel::Kernel;
 
 use super::{
-    CONVOLUTION_LOOKUP_TABLE_INDEX, CONVOLUTION_OFFSET_512_TO_64, DCT_MATRIX_NCOLS,
-    DCT_MATRIX_RMAJOR, TENT_FILTER_COLUMN_OFFSET, TENT_FILTER_EFFECTIVE_ROWS,
-    TENT_FILTER_WEIGHTS_X8,
+    CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_NCOLS, DCT_MATRIX_RMAJOR, TENT_FILTER_COLUMN_OFFSET,
+    TENT_FILTER_EFFECTIVE_ROWS, TENT_FILTER_WEIGHTS_X8,
 };
 
 /// Compute kernel using hand-written AVX2 intrinsics.
@@ -39,10 +40,10 @@ use super::{
 /// - different rounding rules in the intrinsics by generally within 5 times epsilon (~5e-7) when tested on a random input.
 /// - rounding errors when convoluting using a pre-computed lookup table.
 ///
-/// On a test image usually we can do 11-15 bits different than reference, when the official docs consider <10 bits different as "correct".
+/// On a test image usually we can do ~12 bits different than our reference implementation, when the official docs consider <10 bits different as "correct".
 /// This is still useful nevertheless for high-throughput matching as a matching threshold is <=31 by official docs, well within this error margin.
 ///
-/// Benchmark shows a ~10x improvement in the core DCT2D operation throughput (and ~4x for a whole workflow due to hitting memory bandwidth limits) over the generic or reference implementation.
+/// Benchmark shows a ~10x improvement throughput over the generic (auto-vectorized) implementation, ~100x over the reference implementation.
 ///
 /// Note: You MUST compile with `target-feature=+avx2` (or equivalent) to use this kernel, otherwise a very slow
 /// fallback will be emitted by LLVM.
@@ -84,7 +85,14 @@ impl<T> DerefMut for Align64<T> {
 }
 
 impl Kernel for Avx2F32Kernel {
-    fn jarosz_compress(&mut self, buffer: &[f32; 512 * 512], output: &mut [f32; 64 * 64]) {
+    type Buffer1WidthX = U128;
+    type Buffer1LengthY = U128;
+
+    fn jarosz_compress(
+        &mut self,
+        buffer: &[f32; 512 * 512],
+        output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
         unsafe {
             let mut out_buffer = Align32([0.0; 8]);
 
@@ -103,19 +111,17 @@ impl Kernel for Avx2F32Kernel {
                 }};
             }
 
-            for outi in 0..64 {
-                let in_i = CONVOLUTION_OFFSET_512_TO_64[outi] - TENT_FILTER_COLUMN_OFFSET;
-                for outj in 0..64 {
-                    let in_j = CONVOLUTION_OFFSET_512_TO_64[outj] - TENT_FILTER_COLUMN_OFFSET;
+            for outi in 0..127 {
+                let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
+                for outj in 0..127 {
+                    let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                     let mut sum = _mm256_setzero_ps();
-                    let weight_table_idx = CONVOLUTION_LOOKUP_TABLE_INDEX[outi * 64 + outj];
-                    let weights = &TENT_FILTER_WEIGHTS_X8[weight_table_idx as usize];
                     for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
                         let buffer = _mm256_loadu_ps(buffer.as_ptr().add((in_i + di) * 512 + in_j));
-                        let weights = _mm256_loadu_ps(weights.as_ptr().add(di * 8));
+                        let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
                         sum = _mm256_fmadd_ps(buffer, weights, sum);
                     }
-                    output[outi * 64 + outj] = horizontal!(_mm256_hadd_ps(sum));
+                    output[outi][outj] = horizontal!(_mm256_hadd_ps(sum));
                 }
             }
         }
@@ -242,22 +248,26 @@ impl Kernel for Avx2F32Kernel {
 
     // sum of gradients is a pretty auto-vectorizable operation (and benchmark shows the same performance), so we will let it do what it thinks is best for the target architecture
 
-    fn dct2d(&mut self, buffer: &[f32; 64 * 64], output: &mut [f32; 16 * 16]) {
+    fn dct2d(
+        &mut self,
+        buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        output: &mut [f32; 16 * 16],
+    ) {
         unsafe {
             let mut out_buffer = Align32([0.0; 8]);
 
             for k in 0..16 {
-                let mut tmp = [0.0; 64];
+                let mut tmp = [0.0; 128]; // pad one to avoid storing out of bounds
 
                 // vectorize j by 32x8 lanes, unroll inner loop by 8 w.r.t. DCT loading
-                for j_by_8 in (0..64).step_by(8) {
+                for j_by_8 in (0..128).step_by(8) {
                     let mut sumk = _mm256_setzero_ps();
 
                     let mut k2 = 0;
 
                     macro_rules! do_loop {
                         (1, $dct_row:expr, $dct_idx:expr) => {
-                            let buf_row = _mm256_loadu_ps(buffer.as_ptr().add(k2 * 64 + j_by_8));
+                            let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
                             let dct =
                                 _mm256_permutevar8x32_ps($dct_row, _mm256_set1_epi32($dct_idx));
                             sumk = _mm256_fmadd_ps(buf_row, dct, sumk);
@@ -299,9 +309,14 @@ impl Kernel for Avx2F32Kernel {
                             k2 += 1;
                             do_loop!(32);
                         };
+                        (128) => {
+                            do_loop!(64);
+                            k2 += 1;
+                            do_loop!(64);
+                        };
                     }
 
-                    do_loop!(64);
+                    do_loop!(128);
 
                     _mm256_storeu_ps(tmp.as_mut_ptr().add(j_by_8), sumk);
                 }
@@ -339,9 +354,15 @@ impl Kernel for Avx2F32Kernel {
                             dct_ptr = dct_ptr.add(8);
                             do_loop!(32);
                         };
+                        (128) => {
+                            do_loop!(64);
+                            tmp_ptr = tmp_ptr.add(8);
+                            dct_ptr = dct_ptr.add(8);
+                            do_loop!(64);
+                        };
                     }
 
-                    do_loop!(64);
+                    do_loop!(128);
 
                     // 0, 1, 2, 3, 4, 5, 6, 7
                     sumkh = _mm256_hadd_ps(sumkh, zero);
@@ -365,7 +386,14 @@ pub struct Avx512F32Kernel;
 
 #[cfg(feature = "avx512")]
 impl Kernel for Avx512F32Kernel {
-    fn jarosz_compress(&mut self, buffer: &[f32; 512 * 512], output: &mut [f32; 64 * 64]) {
+    type Buffer1WidthX = U128;
+    type Buffer1LengthY = U128;
+
+    fn jarosz_compress(
+        &mut self,
+        buffer: &[f32; 512 * 512],
+        output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
         // this part requires serious unrolling to overcome suboptimal memory access patterns
         // so we will not vectorize it further
         Avx2F32Kernel.jarosz_compress(buffer, output);
@@ -570,20 +598,24 @@ impl Kernel for Avx512F32Kernel {
         }
     }
 
-    fn dct2d(&mut self, buffer: &[f32; 64 * 64], output: &mut [f32; 16 * 16]) {
+    fn dct2d(
+        &mut self,
+        buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        output: &mut [f32; 16 * 16],
+    ) {
         unsafe {
             for k in 0..16 {
-                let mut tmp = [0.0; 64];
+                let mut tmp = [0.0; 128];
 
                 // vectorize j by 32x16 lanes, unroll inner loop by 16 w.r.t. DCT loading
-                for j_by_16 in (0..64).step_by(16) {
+                for j_by_16 in (0..128).step_by(16) {
                     let mut sumk = _mm512_setzero_ps();
 
                     let mut k2 = 0;
 
                     macro_rules! do_loop {
                         (1, $dct_row:expr, $dct_idx:expr) => {
-                            let buf_row = _mm512_loadu_ps(buffer.as_ptr().add(k2 * 64 + j_by_16));
+                            let buf_row = _mm512_loadu_ps(&buffer[k2][j_by_16]);
                             let dct = _mm512_permutexvar_ps(_mm512_set1_epi32($dct_idx), $dct_row);
                             sumk = _mm512_fmadd_ps(buf_row, dct, sumk);
                         };
@@ -625,9 +657,14 @@ impl Kernel for Avx512F32Kernel {
                             k2 += 1;
                             do_loop!(32);
                         };
+                        (128) => {
+                            do_loop!(64);
+                            k2 += 1;
+                            do_loop!(64);
+                        };
                     }
 
-                    do_loop!(64);
+                    do_loop!(128);
 
                     _mm512_storeu_ps(tmp.as_mut_ptr().add(j_by_16), sumk);
                 }
@@ -659,9 +696,15 @@ impl Kernel for Avx512F32Kernel {
                             dct_ptr = dct_ptr.add(16);
                             do_loop!(32);
                         };
+                        (128) => {
+                            do_loop!(64);
+                            tmp_ptr = tmp_ptr.add(16);
+                            dct_ptr = dct_ptr.add(16);
+                            do_loop!(64);
+                        };
                     }
 
-                    do_loop!(64);
+                    do_loop!(128);
 
                     output[k * 16 + j] = _mm512_reduce_add_ps(sumkh);
                 }

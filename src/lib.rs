@@ -23,6 +23,7 @@
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 #![cfg_attr(feature = "avx512", feature(stdarch_x86_avx512))]
 #![warn(missing_docs)]
+pub use generic_array::GenericArray;
 use kernel::Kernel;
 
 /// PDQ compression kernel
@@ -33,7 +34,7 @@ pub fn hash<K: Kernel>(
     kernel: &mut K,
     input: &[f32; 512 * 512],
     output: &mut [u8; 2 * 16],
-    buf1: &mut [f32; 64 * 64],
+    buf1: &mut GenericArray<GenericArray<f32, K::Buffer1WidthX>, K::Buffer1LengthY>,
     buf2: &mut [f32; 16 * 16],
 ) -> f32 {
     kernel.jarosz_compress(input, buf1);
@@ -69,7 +70,7 @@ mod tests {
             pdqhash::generate_pdq_full_size(&DynamicImage::ImageLuma8(input_image));
 
         let mut output = [0; 2 * 16];
-        let mut buf1 = [0.0; 64 * 64];
+        let mut buf1 = GenericArray::default();
         let mut buf2 = [0.0; 16 * 16];
         let quality = hash(
             kernel,

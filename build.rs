@@ -42,7 +42,6 @@ trait MiniFloat:
     + Debug
     + Sized
 {
-    fn is_pos(&self) -> bool;
     fn zero() -> Self;
     fn one() -> Self;
     fn sqrt(self) -> Self;
@@ -91,10 +90,6 @@ impl<const PREC: u32> Neg for MultiPrecF<PREC> {
 }
 
 impl<const PREC: u32> MiniFloat for MultiPrecF<PREC> {
-    fn is_pos(&self) -> bool {
-        self.0.is_sign_positive()
-    }
-
     fn zero() -> Self {
         Self(RFloat::new(PREC))
     }
@@ -270,111 +265,6 @@ fn d_value<R: MiniFloat>(i: u32, j: u32, n: u32) -> R {
     (two.clone() / n1.clone()).sqrt() * (pi / (two.clone() * n1) * i1 * (two * j1 + one)).cos()
 }
 
-/*
-Brainstorm sub-pixel tent filter:
-
-We can create sub-pixel lookup tables:
-
-Originally we have this and lookup tables are only accurate at exact convolution centers that map dead on an input pixel:
-
-#---------#
-|         |
-|         |
-|         |
-|         |
-|         |
-#---------#
-
-We can divide the unit square 3x3 sub-pixels, 1 lookup table -> 9 lookup tables (+~114k when padded to 32x8 SIMD) but much more precision:
-
-Finally add the index of the lookup table to use in the convolution lookup table
-
-#--*--*--#
-|         |
-*--*--*--*
-|         |
-*--*--*--*
-|         |
-#--*--*--#
-
-*/
-
-// The offset of the impulse for each lookup table. x goes to the right and y goes down
-//
-// 0 1 2
-// 3 4 5
-// 6 7 8
-#[derive(Debug, Clone)]
-struct LerpPad<R: MiniFloat> {
-    pad: [R; 9],
-}
-
-impl<R: MiniFloat> LerpPad<R> {
-    fn zeros() -> Self {
-        Self {
-            pad: std::array::from_fn(|_| R::zero()),
-        }
-    }
-
-    fn compute_2d_lerp(impulse_offset: (R, R)) -> Self {
-        let mut lerp_pad = Self::zeros();
-        let one = R::one();
-        let (p_11, p_12, p_21, p_22) = match (impulse_offset.0.is_pos(), impulse_offset.1.is_pos())
-        {
-            (true, true) => (4, 5, 7, 8),
-            (true, false) => (1, 2, 4, 5),
-            (false, true) => (3, 4, 6, 7),
-            (false, false) => (0, 1, 3, 4),
-        };
-        let dx;
-        let dy;
-        if impulse_offset.0.is_pos() {
-            dx = impulse_offset.0;
-        } else {
-            dx = impulse_offset.0 + one.clone();
-        }
-        if impulse_offset.1.is_pos() {
-            dy = impulse_offset.1;
-        } else {
-            dy = impulse_offset.1 + one.clone();
-        }
-        lerp_pad.pad[p_11] = (R::one() - dx.clone()) * (R::one() - dy.clone());
-        lerp_pad.pad[p_12] = dx.clone() * (R::one() - dy.clone());
-        lerp_pad.pad[p_21] = (R::one() - dx.clone()) * dy.clone();
-        lerp_pad.pad[p_22] = dx.clone() * dy.clone();
-
-        let all_positive = lerp_pad.pad.iter().all(|x| x.is_pos() || *x == R::zero());
-        assert!(all_positive, "lerp_pad: {:?}", lerp_pad);
-
-        lerp_pad
-    }
-
-    fn compute(
-        &self,
-        x00: &R,
-        x01: &R,
-        x02: &R,
-        x10: &R,
-        x11: &R,
-        x12: &R,
-        x20: &R,
-        x21: &R,
-        x22: &R,
-    ) -> R {
-        let mut sum = R::zero();
-        sum += x00.clone() * self.pad[0].clone();
-        sum += x01.clone() * self.pad[1].clone();
-        sum += x02.clone() * self.pad[2].clone();
-        sum += x10.clone() * self.pad[3].clone();
-        sum += x11.clone() * self.pad[4].clone();
-        sum += x12.clone() * self.pad[5].clone();
-        sum += x20.clone() * self.pad[6].clone();
-        sum += x21.clone() * self.pad[7].clone();
-        sum += x22.clone() * self.pad[8].clone();
-        sum
-    }
-}
-
 // precompute a padded tent filter weights matrix using impulse response on a reference implementation
 //
 // it is intended to be symmetric so we don't need two
@@ -385,17 +275,14 @@ impl<R: MiniFloat> LerpPad<R> {
 fn tent_filter_weights<R: MiniFloat>(
     old_dimension: usize,
     new_dimension: usize,
-    // the sub-pixel offset of the impulse for the lookup table
-    // say we want to convolve on (7.2, 6.8) with a radius of 2 (ie. 5x5 convolution where the center is slightly top-left, effective window is (5.2..=9.2, 4.8..=8.8))
-    // then the impulse offset is (0.2, -0.2), and the impulse intended to be delivered to (0, 0) w.r.t. the output will now be delivered at (0.2, -0.2) and distributed to concrete pixels by 2D lerping
-    impulse_offset: (R, R),
 ) -> (usize, (usize, usize), Vec<R>) {
     let window_size = mean_box::compute_jarosz_filter_window_size(old_dimension, new_dimension);
-    let effective_rows = window_size * 2 + 3;
-    let effective_cols = window_size * 2 + 3;
-    let lerp_pad = LerpPad::compute_2d_lerp(impulse_offset);
-    let mut tmp = Vec::with_capacity((window_size * 2 + 3) * (window_size * 2 + 3));
-    tmp.resize((window_size * 2 + 3) * (window_size * 2 + 3), R::zero());
+    eprintln!("window_size: {}", window_size);
+    assert!(window_size > 0);
+    let effective_rows = window_size * 2 + 1;
+    let effective_cols = window_size * 2 + 1;
+    let mut tmp = Vec::with_capacity((window_size * 2 + 1) * (window_size * 2 + 1));
+    tmp.resize((window_size * 2 + 1) * (window_size * 2 + 1), R::zero());
 
     let mut output = Vec::with_capacity(effective_rows * effective_cols * 4);
     output.resize(effective_rows * effective_cols * 4, R::zero());
@@ -403,7 +290,7 @@ fn tent_filter_weights<R: MiniFloat>(
         for dj in 0..effective_cols {
             tmp.fill_with(|| R::zero());
 
-            tmp[di * (window_size * 2 + 3) + dj] = R::one();
+            tmp[di * (window_size * 2 + 1) + dj] = R::one();
 
             let mut sum = R::zero();
             for x in tmp.iter() {
@@ -413,54 +300,25 @@ fn tent_filter_weights<R: MiniFloat>(
 
             mean_box::jarosz_filter_float(
                 tmp.as_mut_slice(),
-                window_size * 2 + 3,
-                window_size * 2 + 3,
+                window_size * 2 + 1,
+                window_size * 2 + 1,
                 window_size,
                 window_size,
                 2,
             );
 
-            let middle = lerp_pad.compute(
-                &tmp[(window_size - 1) * (window_size * 2 + 3) + window_size - 1],
-                &tmp[window_size * (window_size * 2 + 3) + window_size],
-                &tmp[(window_size + 1) * (window_size * 2 + 3) + window_size + 1],
-                &tmp[(window_size - 1) * (window_size * 2 + 3) + window_size - 1],
-                &tmp[window_size * (window_size * 2 + 3) + window_size],
-                &tmp[(window_size + 1) * (window_size * 2 + 3) + window_size + 1],
-                &tmp[(window_size - 1) * (window_size * 2 + 3) + window_size - 1],
-                &tmp[window_size * (window_size * 2 + 3) + window_size],
-                &tmp[(window_size + 1) * (window_size * 2 + 3) + window_size + 1],
-            );
+            let middle = &tmp[window_size * (window_size * 2 + 1) + window_size];
 
             if middle.clone().to_f32() > 0.0 {
-                output[di * effective_cols + dj] = middle;
+                output[di * effective_cols + dj] = middle.clone();
             }
         }
     }
 
-    let trim = output
-        .chunks_exact(effective_cols)
-        .take_while(|x| x.iter().all(|y| y.clone().to_f32() == 0.0))
-        .count();
-
-    let mut output_trimmed =
-        Vec::with_capacity((effective_rows - trim * 2) * (effective_cols - trim * 2));
-    output_trimmed.resize(
-        (effective_rows - trim * 2) * (effective_cols - trim * 2),
-        R::zero(),
-    );
-
-    for i in 0..effective_rows - trim * 2 {
-        for j in 0..effective_cols - trim * 2 {
-            output_trimmed[i * (effective_cols - trim * 2) + j] =
-                output[(i + trim) * effective_cols + j + trim].clone();
-        }
-    }
-
     (
-        (effective_cols - trim * 2 - 1) / 2,
-        (effective_rows - trim * 2, effective_cols - trim * 2),
-        output_trimmed,
+        (effective_cols - 1) / 2,
+        (effective_rows, effective_cols),
+        output,
     )
 }
 
@@ -481,7 +339,7 @@ fn main() {
     let mut file = File::create(out_dct_path).unwrap();
     file.set_len(0).unwrap();
     let nrows = 16;
-    let ncols = 64;
+    let ncols = 127;
     let nelems = nrows * ncols;
     writeln!(file, "/// The DCT matrix number of rows").unwrap();
     writeln!(file, "pub const DCT_MATRIX_NROWS: usize = {};", nrows).unwrap();
@@ -492,7 +350,7 @@ fn main() {
     writeln!(file, "/// The DCT matrix in row-major order").unwrap();
     writeln!(file, "pub static DCT_MATRIX_RMAJOR: [f32; {}] = [", nelems).unwrap();
     for i in 1..=16 {
-        for j in 0..64 {
+        for j in 0..127 {
             let v: MultiPrecF = d_value(i, j, ncols);
             writeln!(file, "    f32::from_bits({}),", (v.to_f32()).to_bits()).unwrap();
         }
@@ -500,8 +358,8 @@ fn main() {
     writeln!(file, "];").unwrap();
     file.flush().unwrap();
 
-    let (offset, (effective_rows, effective_cols), _) =
-        tent_filter_weights::<MultiPrecF<192>>(512, 64, (MultiPrecF::zero(), MultiPrecF::zero()));
+    let (offset, (effective_rows, effective_cols), impulse_response) =
+        tent_filter_weights::<MultiPrecF>(512, 127);
 
     assert_eq!((offset, (effective_rows, effective_cols)), (3, (7, 7)));
 
@@ -542,67 +400,7 @@ fn main() {
         effective_cols
     )
     .unwrap();
-    writeln!(
-        tent_file,
-        "/// The tent filter weights in row-major order padded with zeroes to 8-elements wide",
-    )
-    .unwrap();
-    writeln!(
-        tent_file,
-        "pub static TENT_FILTER_WEIGHTS_X8: [[f32; {}]; 9] = [",
-        effective_rows * 8,
-    )
-    .unwrap();
-    let padding = 8 - effective_cols;
-    for subtype in 0..9 {
-        writeln!(tent_file, "[").unwrap();
-        let zero = MultiPrecF::zero();
-        let one = MultiPrecF::one();
-        let two = one.clone() + one.clone();
-        let half = one.clone() / two.clone();
-        let three = two.clone() + one.clone();
-        let six = three.clone() + three.clone();
-        let sixth = one.clone() / six.clone();
-        let neg_threshold = half.clone().neg() + sixth.clone();
-        let pos_threshold = half - sixth;
-        assert_eq!(neg_threshold.clone().neg(), pos_threshold);
-        let offset = &[
-            (neg_threshold.clone(), neg_threshold.clone()),
-            (zero.clone(), neg_threshold.clone()),
-            (pos_threshold.clone(), neg_threshold.clone()),
-            (neg_threshold.clone(), zero.clone()),
-            (zero.clone(), zero.clone()),
-            (pos_threshold.clone(), zero.clone()),
-            (neg_threshold.clone(), pos_threshold.clone()),
-            (zero.clone(), pos_threshold.clone()),
-            (pos_threshold.clone(), pos_threshold.clone()),
-        ][subtype];
 
-        let (_, (_, _), weights) = tent_filter_weights::<MultiPrecF<192>>(
-            512,
-            64,
-            (offset.0.clone().neg(), offset.1.clone().neg()),
-        );
-
-        for i in 0..effective_rows {
-            let row = &weights[i * effective_cols..];
-            for j in 0..effective_cols {
-                writeln!(
-                    tent_file,
-                    "f32::from_bits({}),  // {}",
-                    (row[j].clone().to_f32()).to_bits(),
-                    row[j].clone().to_f32()
-                )
-                .unwrap();
-            }
-            for _ in 0..padding {
-                write!(tent_file, "0.0, ").unwrap();
-            }
-            writeln!(tent_file).unwrap();
-        }
-        writeln!(tent_file, "],").unwrap();
-    }
-    writeln!(tent_file, "];").unwrap();
     writeln!(
         tent_file,
         "/// The tent filter impulse response lookup table",
@@ -610,57 +408,55 @@ fn main() {
     .unwrap();
     writeln!(
         tent_file,
-        "pub static TENT_FILTER_WEIGHTS: [[f32; {}]; 9] = [",
+        "pub static TENT_FILTER_WEIGHTS: [f32; {}] = [",
         effective_rows * effective_cols
     )
     .unwrap();
 
-    for subtype in 0..9 {
-        writeln!(tent_file, "[").unwrap();
-        let zero = MultiPrecF::zero();
-        let one = MultiPrecF::one();
-        let two = one.clone() + one.clone();
-        let half = one.clone() / two.clone();
-        let three = two.clone() + one.clone();
-        let six = three.clone() + three.clone();
-        let sixth = one.clone() / six.clone();
-        let neg_threshold = half.clone().neg() + sixth.clone();
-        let pos_threshold = half - sixth;
-        assert_eq!(neg_threshold.clone().neg(), pos_threshold);
-
-        let offset = &[
-            (neg_threshold.clone(), neg_threshold.clone()),
-            (zero.clone(), neg_threshold.clone()),
-            (pos_threshold.clone(), neg_threshold.clone()),
-            (neg_threshold.clone(), zero.clone()),
-            (zero.clone(), zero.clone()),
-            (pos_threshold.clone(), zero.clone()),
-            (neg_threshold.clone(), pos_threshold.clone()),
-            (zero.clone(), pos_threshold.clone()),
-            (pos_threshold.clone(), pos_threshold.clone()),
-        ][subtype];
-
-        let (_, (_, _), weights) = tent_filter_weights::<MultiPrecF<192>>(
-            512,
-            64,
-            (offset.0.clone().neg(), offset.1.clone().neg()),
-        );
-
-        for i in 0..effective_rows {
-            let row = &weights[i * effective_cols..];
-            for j in 0..effective_cols {
-                writeln!(
-                    tent_file,
-                    "f32::from_bits({}), // {}",
-                    (row[j].clone().to_f32()).to_bits(),
-                    row[j].clone().to_f32()
-                )
-                .unwrap();
-            }
+    for i in 0..effective_rows {
+        let row = &impulse_response[i * effective_cols..];
+        for j in 0..effective_cols {
+            writeln!(
+                tent_file,
+                "f32::from_bits({}), // {}",
+                (row[j].clone().to_f32()).to_bits(),
+                row[j].clone().to_f32()
+            )
+            .unwrap();
         }
-        writeln!(tent_file, "],").unwrap();
     }
 
+    writeln!(tent_file, "];").unwrap();
+
+    writeln!(
+        tent_file,
+        "/// The tent filter weights in row-major order padded with zeroes to 8-elements wide",
+    )
+    .unwrap();
+    writeln!(
+        tent_file,
+        "pub static TENT_FILTER_WEIGHTS_X8: [f32; {}] = [",
+        effective_rows * 8,
+    )
+    .unwrap();
+    let padding = 8 - effective_cols;
+
+    for i in 0..effective_rows {
+        let row = &impulse_response[i * effective_cols..];
+        for j in 0..effective_cols {
+            writeln!(
+                tent_file,
+                "f32::from_bits({}),  // {}",
+                (row[j].clone().to_f32()).to_bits(),
+                row[j].clone().to_f32()
+            )
+            .unwrap();
+        }
+        for _ in 0..padding {
+            write!(tent_file, "0.0, ").unwrap();
+        }
+        writeln!(tent_file).unwrap();
+    }
     writeln!(tent_file, "];").unwrap();
 
     tent_file.flush().unwrap();
@@ -674,12 +470,12 @@ fn main() {
     .unwrap();
     writeln!(
         convolution_offset_file,
-        "const CONVOLUTION_OFFSET_512_TO_64: [usize; 64] = [",
+        "const CONVOLUTION_OFFSET_512_TO_127: [usize; 127] = [",
     )
     .unwrap();
 
-    for out_i in 0..64 {
-        let in_i = lerp(0.0, 512.0, out_i, 64);
+    for out_i in 0..127 {
+        let in_i = lerp(0.0, 512.0, out_i, 127);
         writeln!(
             convolution_offset_file,
             "    {}, // {} -> {}",
@@ -690,49 +486,6 @@ fn main() {
         .unwrap();
     }
     writeln!(convolution_offset_file, "];").unwrap();
-    writeln!(
-        convolution_offset_file,
-        "const CONVOLUTION_LOOKUP_TABLE_INDEX: [u8; 64 * 64] = ["
-    )
-    .unwrap();
-    for i in 0..64 {
-        for j in 0..64 {
-            const POS_THRESHOLD: f64 = 1.0 / 2.0 - 1.0 / 3.0;
-            const NEG_THRESHOLD: f64 = -1.0 / 2.0 + 1.0 / 3.0;
 
-            // 0 ....... 0.5 ...... 1
-            // within 0 - 0.5, we split 0.5 - 1/3 to the intermediate spate
-            let in_i = lerp(0.0, 512.0, i, 64);
-            let in_i_int = (in_i.round() as usize).max(0).min(511);
-            let in_i_offset = in_i - in_i_int as f64;
-            let in_j = lerp(0.0, 512.0, j, 64);
-            let in_j_int = (in_j.round() as usize).max(0).min(511);
-            let in_j_offset = in_j - in_j_int as f64;
-            let idx_i = if in_i_offset > POS_THRESHOLD && i != 63 {
-                0
-            } else if in_i_offset < NEG_THRESHOLD && i != 0 {
-                2
-            } else {
-                1
-            };
-            let idx_j = if in_j_offset > POS_THRESHOLD && j != 63 {
-                0
-            } else if in_j_offset < NEG_THRESHOLD && j != 0 {
-                2
-            } else {
-                1
-            };
-            writeln!(
-                convolution_offset_file,
-                "{}, // {:?} -> {:?} ~> {:?}",
-                idx_i * 3 + idx_j,
-                (i, j),
-                (in_i, in_j),
-                (in_i_int, in_j_int),
-            )
-            .unwrap();
-        }
-    }
-    writeln!(convolution_offset_file, "];").unwrap();
     convolution_offset_file.flush().unwrap();
 }

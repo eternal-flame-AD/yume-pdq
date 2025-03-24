@@ -8,6 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/yume-pdq"
 
 [dependencies]
+generic-array = "1.2.0"
 
 [build-dependencies]
 derive_more = { version = "2", features = ["add", "add_assign", "mul_assign"] }
