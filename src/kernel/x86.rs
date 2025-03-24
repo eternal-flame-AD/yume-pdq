@@ -268,8 +268,10 @@ impl Kernel for Avx2F32Kernel {
                     macro_rules! do_loop {
                         (1, $dct_row:expr, $dct_idx:expr) => {
                             let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
+                            // Broadcast the i-th column of D^t, multiply with the j-th row of the image
                             let dct =
                                 _mm256_permutevar8x32_ps($dct_row, _mm256_set1_epi32($dct_idx));
+                            // add the result to the sum
                             sumk = _mm256_fmadd_ps(buf_row, dct, sumk);
                         };
                         (2, $dct_row:expr, $dct_idx:expr) => {
@@ -285,6 +287,7 @@ impl Kernel for Avx2F32Kernel {
                             do_loop!(2, $dct_row, $dct_idx);
                         };
                         (8) => {
+                            // load one whole row of DCT matrix (i.e. one column of D^t)
                             let dct_row = _mm256_loadu_ps(
                                 DCT_MATRIX_RMAJOR.as_ptr().add(k * DCT_MATRIX_NCOLS + k2),
                             );
