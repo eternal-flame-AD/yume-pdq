@@ -4,6 +4,8 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
 
 Warning: This should be fully functional to my standards, but I am holding off publishing it to crates.io for a few days to finalize some design decisions.
 
+TODO: Write a piping binary suitable for ffmpeg.
+
 ## Design Goals
 
 Be _accurate enough_ for high-throughput screening. At present, a test image usually result in ~12 bits different from @darwinium-com's [pdqhash](https://crates.io/crates/pdqhash) reference implementation, the official docs require 10 bits to be considered "correct". However the threshold for matching is 31 bits so we consider this not important for the purpose of matching.

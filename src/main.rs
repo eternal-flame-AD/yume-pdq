@@ -38,16 +38,4 @@ fn main() {
             &mut buf2
         )
     );
-    let mut buf1_2 = GenericArray::default();
-    let mut buf2_2 = GenericArray::default();
-    println!(
-        "ReferenceKernel: {:?}",
-        yume_pdq::hash(
-            &mut yume_pdq::kernel::ReferenceKernel::<f32>::default(),
-            input.as_slice().try_into().unwrap(),
-            &mut output,
-            &mut buf1_2,
-            &mut buf2_2
-        )
-    );
 }

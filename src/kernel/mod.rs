@@ -337,6 +337,7 @@ impl Kernel for ReferenceKernel<f32> {
     }
 }
 
+#[cfg(any(feature = "std", test))]
 impl Kernel for ReferenceKernel<f64> {
     type Buffer1WidthX = U127;
     type Buffer1LengthY = U127;
