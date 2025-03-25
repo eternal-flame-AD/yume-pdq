@@ -264,6 +264,51 @@ fn bench_hash_flip8(c: &mut Criterion) {
             input
         });
     });
+
+    group.bench_function("avx2", |b| {
+        let mut input = [0; 2 * 16];
+        rng.fill(&mut input);
+        b.iter(|| {
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_vflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_diagflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_vflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+            input
+        });
+    });
+
+    #[cfg(feature = "avx512")]
+    group.bench_function("avx512", |b| {
+        let mut input = [0; 2 * 16];
+        rng.fill(&mut input);
+        b.iter(|| {
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_vflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_diagflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_vflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+            input
+        });
+    });
 }
 
 fn bench_hash(c: &mut Criterion) {
