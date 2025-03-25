@@ -91,7 +91,7 @@ pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>,
 /// Compute kernel for doing heavy-duty transformations.
 ///
 /// A scalar (auto-vectorized) implementation is provided in `DefaultKernel`.
-pub trait Kernel: Send + Sized {
+pub trait Kernel {
     /// The width of the first stage (compression) buffer.
     type Buffer1WidthX: ArrayLength;
     /// The length of the first stage (compression) buffer.
