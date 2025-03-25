@@ -47,8 +47,9 @@ trait MiniFloat:
     fn sqrt(self) -> Self;
     fn pi() -> Self;
     fn cos(self) -> Self;
-    fn from_u32(u: u32) -> Self;
+    fn from_i32(i: i32) -> Self;
     fn to_f32(self) -> f32;
+    fn to_f64(self) -> f64;
 }
 
 #[derive(
@@ -116,12 +117,16 @@ impl<const PREC: u32> MiniFloat for MultiPrecF<PREC> {
         Self(self.0.cos())
     }
 
-    fn from_u32(u: u32) -> Self {
-        Self(RFloat::with_val(PREC, u))
+    fn from_i32(i: i32) -> Self {
+        Self(RFloat::with_val(PREC, i))
     }
 
     fn to_f32(self) -> f32 {
         self.0.to_f32()
+    }
+
+    fn to_f64(self) -> f64 {
+        self.0.to_f64()
     }
 
     fn sqrt(self) -> Self {
@@ -254,10 +259,11 @@ mod mean_box {
     }
 }
 
-fn d_value<R: MiniFloat>(i: u32, j: u32, n: u32) -> R {
-    let n1 = R::from_u32(n);
-    let i1 = R::from_u32(i);
-    let j1 = R::from_u32(j);
+// d matrix for DCT, compared to be identical with the reference implementation lookup table
+fn d_value<R: MiniFloat>(i: i32, j: i32, n: i32) -> R {
+    let n1 = R::from_i32(n);
+    let i1 = R::from_i32(i);
+    let j1 = R::from_i32(j);
     let one = R::one();
     let two = one.clone() + one.clone();
     let pi = R::pi();
@@ -265,7 +271,7 @@ fn d_value<R: MiniFloat>(i: u32, j: u32, n: u32) -> R {
     (two.clone() / n1.clone()).sqrt() * (pi / (two.clone() * n1) * i1 * (two * j1 + one)).cos()
 }
 
-// precompute a padded tent filter weights matrix using impulse response on a reference implementation
+// precompute a tent filter weights matrix using impulse response on a reference implementation
 //
 // it is intended to be symmetric so we don't need two
 // the return is (offset, (effective_rows, effective_cols), weights)
@@ -277,12 +283,11 @@ fn tent_filter_weights<R: MiniFloat>(
     new_dimension: usize,
 ) -> (usize, (usize, usize), Vec<R>) {
     let window_size = mean_box::compute_jarosz_filter_window_size(old_dimension, new_dimension);
-    eprintln!("window_size: {}", window_size);
     assert!(window_size > 0);
     let effective_rows = window_size * 2 + 1;
     let effective_cols = window_size * 2 + 1;
-    let mut tmp = Vec::with_capacity((window_size * 2 + 1) * (window_size * 2 + 1));
-    tmp.resize((window_size * 2 + 1) * (window_size * 2 + 1), R::zero());
+    let mut tmp = Vec::with_capacity(effective_rows * effective_cols);
+    tmp.resize(effective_rows * effective_cols, R::zero());
 
     let mut output = Vec::with_capacity(effective_rows * effective_cols * 4);
     output.resize(effective_rows * effective_cols * 4, R::zero());
@@ -290,7 +295,7 @@ fn tent_filter_weights<R: MiniFloat>(
         for dj in 0..effective_cols {
             tmp.fill_with(|| R::zero());
 
-            tmp[di * (window_size * 2 + 1) + dj] = R::one();
+            tmp[di * effective_cols + dj] = R::one();
 
             let mut sum = R::zero();
             for x in tmp.iter() {
@@ -300,14 +305,14 @@ fn tent_filter_weights<R: MiniFloat>(
 
             mean_box::jarosz_filter_float(
                 tmp.as_mut_slice(),
-                window_size * 2 + 1,
-                window_size * 2 + 1,
+                effective_rows,
+                effective_cols,
                 window_size,
                 window_size,
                 2,
             );
 
-            let middle = &tmp[window_size * (window_size * 2 + 1) + window_size];
+            let middle = &tmp[window_size * effective_cols + window_size];
 
             if middle.clone().to_f32() > 0.0 {
                 output[di * effective_cols + dj] = middle.clone();
@@ -335,6 +340,48 @@ fn main() {
     out_tent_path.push("tent_filter_weights.rs");
     let mut out_convolution_offset_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     out_convolution_offset_path.push("convolution_offset.rs");
+    let mut dihedral_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    dihedral_path.push("dihedral.rs");
+
+    let mut dihedral_file = File::create(dihedral_path).unwrap();
+    dihedral_file.set_len(0).unwrap();
+    writeln!(
+        dihedral_file,
+        "/// Lookup table for flipping a byte horizontally"
+    )
+    .unwrap();
+    writeln!(dihedral_file, "const FLIP_U8: [u8; 256] = [").unwrap();
+    for input in 0..=u8::MAX {
+        let mut out = 0;
+        for j in 0..8 {
+            let on = (1 << (7 - j)) & input;
+            if on != 0 {
+                out |= 1 << j;
+            }
+        }
+        write!(dihedral_file, "0b{:08b},", out).unwrap();
+    }
+    writeln!(dihedral_file, "];").unwrap();
+    writeln!(dihedral_file, "").unwrap();
+    writeln!(
+        dihedral_file,
+        "/// Lookup table for expanding a byte value into 8 masks"
+    )
+    .unwrap();
+    writeln!(dihedral_file, "#[allow(unused)]").unwrap();
+    writeln!(dihedral_file, "const EXTRACT_BITS: [[bool; 8]; 256] = [").unwrap();
+    for j in 0..=u8::MAX {
+        writeln!(dihedral_file, "[").unwrap();
+        for i in 0..8 {
+            let mask = 0b10000000 >> i;
+            write!(dihedral_file, "{},", (j & mask) != 0).unwrap();
+        }
+        writeln!(dihedral_file, "], ").unwrap();
+    }
+    writeln!(dihedral_file, "];").unwrap();
+    writeln!(dihedral_file, "").unwrap();
+
+    dihedral_file.flush().unwrap();
 
     let mut file = File::create(out_dct_path).unwrap();
     file.set_len(0).unwrap();
@@ -352,10 +399,41 @@ fn main() {
     for i in 1..=16 {
         for j in 0..127 {
             let v: MultiPrecF = d_value(i, j, ncols);
-            writeln!(file, "    f32::from_bits({}),", (v.to_f32()).to_bits()).unwrap();
+            writeln!(
+                file,
+                "    f32::from_bits({}), // {}",
+                (v.clone().to_f32()).to_bits(),
+                v.to_f32()
+            )
+            .unwrap();
         }
     }
     writeln!(file, "];").unwrap();
+
+    writeln!(file, "").unwrap();
+    writeln!(file, "/// The DCT matrix in row-major order (f64)").unwrap();
+    writeln!(
+        file,
+        "pub static DCT_MATRIX_RMAJOR_64: [f64; {}] = [",
+        nelems
+    )
+    .unwrap();
+    for i in 1..=16 {
+        for j in 0..127 {
+            let v: MultiPrecF = d_value(i, j, ncols);
+            writeln!(
+                file,
+                "    f64::from_bits({}),  // {}",
+                (v.clone().to_f64()).to_bits(),
+                v.clone().to_f64()
+            )
+            .unwrap();
+        }
+    }
+    writeln!(file, "];").unwrap();
+
+    writeln!(file, "").unwrap();
+
     file.flush().unwrap();
 
     let (offset, (effective_rows, effective_cols), impulse_response) =
@@ -427,6 +505,8 @@ fn main() {
     }
 
     writeln!(tent_file, "];").unwrap();
+
+    writeln!(tent_file, "").unwrap();
 
     writeln!(
         tent_file,

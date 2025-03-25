@@ -24,7 +24,10 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use generic_array::{GenericArray, typenum::U128};
+use generic_array::{
+    GenericArray,
+    typenum::{U16, U128},
+};
 
 use crate::kernel::Kernel;
 
@@ -50,11 +53,58 @@ use super::{
 pub struct Avx2F32Kernel;
 
 #[repr(align(32))]
-struct Align32<T>(T);
+/// Align the item to 32 bytes.
+pub struct Align32<T>(pub T);
+
+impl<T> Align32<T> {
+    /// Convert a pointer to a `Align32<T>` to a reference.
+    ///
+    /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
+    pub const unsafe fn from_raw_unchecked(ptr: *const T) -> *const Self {
+        ptr as *const Self
+    }
+
+    /// Convert a reference to a `T` to a reference to a `Align32<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the reference is not aligned to 32 bytes.
+    pub fn from_raw(input: &T) -> &Self {
+        let ptr = input as *const T;
+        assert_eq!(
+            ptr.align_offset(32),
+            0,
+            "pointer is not aligned to 32 bytes"
+        );
+        unsafe { &*(ptr as *const Self) }
+    }
+
+    /// Convert a pointer to a `Align32<T>` to a mutable reference.
+    ///
+    /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
+    pub const unsafe fn from_raw_mut_unchecked(ptr: *mut T) -> *mut Self {
+        ptr as *mut Self
+    }
+
+    /// Convert a reference to a `T` to a mutable reference to a `Align32<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the reference is not aligned to 32 bytes.
+    pub fn from_raw_mut(input: &mut T) -> &mut Self {
+        let ptr = input as *mut T;
+        assert_eq!(
+            ptr.align_offset(32),
+            0,
+            "pointer is not aligned to 32 bytes"
+        );
+        unsafe { &mut *(ptr as *mut Self) }
+    }
+}
 
 #[repr(align(64))]
-#[cfg_attr(not(feature = "avx512"), expect(unused))]
-struct Align64<T>(T);
+/// Align the item to 64 bytes.
+pub struct Align64<T>(pub T);
 
 impl<T> Deref for Align32<T> {
     type Target = T;
@@ -87,6 +137,7 @@ impl<T> DerefMut for Align64<T> {
 impl Kernel for Avx2F32Kernel {
     type Buffer1WidthX = U128;
     type Buffer1LengthY = U128;
+    type InternalFloat = f32;
 
     fn jarosz_compress(
         &mut self,
@@ -95,21 +146,6 @@ impl Kernel for Avx2F32Kernel {
     ) {
         unsafe {
             let mut out_buffer = Align32([0.0; 8]);
-
-            let shift1 = _mm256_set_epi32(1, 2, 3, 4, 5, 6, 7, 0);
-            let shift2 = _mm256_set_epi32(2, 3, 4, 5, 6, 7, 0, 1);
-            let shift4 = _mm256_set_epi32(4, 5, 6, 7, 0, 1, 2, 3);
-
-            macro_rules! horizontal {
-                ($combine:ident($a:expr)) => {{
-                    let pairwise = $combine($a, _mm256_permutevar8x32_ps($a, shift1));
-                    let every4 = $combine(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
-                    let every8 = $combine(every4, _mm256_permutevar8x32_ps(every4, shift4));
-
-                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
-                    out_buffer.0[0]
-                }};
-            }
 
             for outi in 0..127 {
                 let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
@@ -121,24 +157,49 @@ impl Kernel for Avx2F32Kernel {
                         let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
                         sum = _mm256_fmadd_ps(buffer, weights, sum);
                     }
-                    output[outi][outj] = horizontal!(_mm256_hadd_ps(sum));
+                    sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                    sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), sum);
+                    output[outi][outj] = out_buffer.0[0] + out_buffer.0[4];
                 }
             }
         }
     }
 
-    fn quantize(&mut self, input: &[f32; 16 * 16], output: &mut [u8; 2 * 16]) {
+    fn quantize(
+        &mut self,
+        input: &GenericArray<GenericArray<f32, U16>, U16>,
+        output: &mut [u8; 2 * 16],
+    ) {
         let mut out_buffer = Align32([0.0; 8]);
         unsafe {
-            let shift1 = _mm256_set_epi32(1, 2, 3, 4, 5, 6, 7, 0);
-            let shift2 = _mm256_set_epi32(2, 3, 4, 5, 6, 7, 0, 1);
-            let shift4 = _mm256_set_epi32(4, 5, 6, 7, 0, 1, 2, 3);
+            let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
+            let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
+            let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
 
             macro_rules! horizontal {
-                ($combine:ident($a:expr)) => {{
-                    let pairwise = $combine($a, _mm256_permutevar8x32_ps($a, shift1));
-                    let every4 = $combine(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
-                    let every8 = $combine(every4, _mm256_permutevar8x32_ps(every4, shift4));
+                (max($a:expr)) => {{
+                    let pairwise = _mm256_max_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_max_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_max_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (min($a:expr)) => {{
+                    let pairwise = _mm256_min_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_min_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_min_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (sum($a:expr)) => {{
+                    let pairwise = _mm256_add_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_add_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_add_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
 
                     _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
                     out_buffer.0[0]
@@ -148,17 +209,27 @@ impl Kernel for Avx2F32Kernel {
             let mut max_v = _mm256_set1_ps(f32::MIN);
             let mut min_v = _mm256_set1_ps(f32::MAX);
             for i in (0..(16 * 16)).step_by(8) {
-                let row = _mm256_loadu_ps(input.as_ptr().add(i));
+                let row = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(i));
                 min_v = _mm256_min_ps(min_v, row);
                 max_v = _mm256_max_ps(max_v, row);
             }
-            let mut max = horizontal!(_mm256_max_ps(max_v));
-            let mut min = horizontal!(_mm256_min_ps(min_v));
+            let mut max = horizontal!(max(max_v));
+            let mut min = horizontal!(min(min_v));
             let half_point = (16 * 16 / 2) as f32;
 
             let mut guess = (min + max) * 0.5;
             let mut num_over = 0.0f32; // how many elements are beyond the search max?
             let mut num_under = 0.0f32; // how many elements are below the search min?
+            // if we consider min as 0, max as 255, the range of the guessing windows for each iteration at the beginning (when writing the mask):
+            // 0 -> (0, 255)
+            // 1 -> (0, 127.5)
+            // 2 -> (0, 63.75)
+            // 3 -> (0, 31.875)
+            // 4 -> (0, 15.9375)
+            // 5 -> (0, 7.96875)
+            // 6 -> (0, 3.984375)
+            // 7 -> (0, 1.9921875) at worst off by 1, and with a more educated guess it should be almost impossible to happen
+            // 8 -> (0, 0.99609375) perfect thresholding
             for _ in 0..8 {
                 let guess_v = _mm256_set1_ps(guess);
                 let mut resid_gt_count_v = _mm256_setzero_ps();
@@ -168,7 +239,7 @@ impl Kernel for Avx2F32Kernel {
                 let min_v = _mm256_set1_ps(min);
                 let max_v = _mm256_set1_ps(max);
 
-                let mut row_ptr = input.as_ptr();
+                let mut row_ptr = input.as_ptr().cast::<f32>();
                 let mut output_ptr = output.as_mut_ptr().add(32 - 1);
                 macro_rules! do_loop {
                     (1) => {
@@ -228,17 +299,17 @@ impl Kernel for Avx2F32Kernel {
 
                 do_loop!(32);
 
-                let gt_count = horizontal!(_mm256_add_ps(resid_gt_count_v));
-                let lt_count = horizontal!(_mm256_add_ps(resid_lt_count_v));
+                let gt_count = horizontal!(sum(resid_gt_count_v));
+                let lt_count = horizontal!(sum(resid_lt_count_v));
 
                 if gt_count + num_over > half_point {
                     num_under += lt_count;
                     min = guess;
-                    guess = horizontal!(_mm256_add_ps(resid_sum_gt_v)) / gt_count;
+                    guess = horizontal!(sum(resid_sum_gt_v)) / gt_count;
                 } else if lt_count + num_under > half_point {
                     num_over += gt_count;
                     max = guess;
-                    guess = horizontal!(_mm256_add_ps(resid_sum_lt_v)) / lt_count;
+                    guess = horizontal!(sum(resid_sum_lt_v)) / lt_count;
                 } else {
                     break;
                 }
@@ -251,10 +322,42 @@ impl Kernel for Avx2F32Kernel {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
-        output: &mut [f32; 16 * 16],
+        output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
+        let mut out_buffer = Align32([0.0; 8]);
         unsafe {
-            let mut out_buffer = Align32([0.0; 8]);
+            let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
+            let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
+            let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
+
+            macro_rules! horizontal {
+                (max($a:expr)) => {{
+                    let pairwise = _mm256_max_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_max_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_max_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (min($a:expr)) => {{
+                    let pairwise = _mm256_min_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_min_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_min_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (sum($a:expr)) => {{
+                    let pairwise = _mm256_add_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_add_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_add_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+            }
 
             for k in 0..16 {
                 let mut tmp = [0.0; 128]; // pad one to avoid storing out of bounds
@@ -367,14 +470,7 @@ impl Kernel for Avx2F32Kernel {
 
                     do_loop!(128);
 
-                    // 0, 1, 2, 3, 4, 5, 6, 7
-                    sumkh = _mm256_hadd_ps(sumkh, zero);
-                    // 01, 23, _, _, 45, 67, _, _
-                    sumkh = _mm256_hadd_ps(sumkh, zero);
-                    // 0123, _, _, _, 4567, _, _, _
-
-                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), sumkh);
-                    output[k * 16 + j] = out_buffer.0[0] + out_buffer.0[4];
+                    output[k][j] = horizontal!(sum(sumkh)) - (*tmp_ptr.add(7) * *dct_ptr.add(7));
                 }
             }
         }
@@ -391,6 +487,7 @@ pub struct Avx512F32Kernel;
 impl Kernel for Avx512F32Kernel {
     type Buffer1WidthX = U128;
     type Buffer1LengthY = U128;
+    type InternalFloat = f32;
 
     fn jarosz_compress(
         &mut self,
@@ -402,35 +499,21 @@ impl Kernel for Avx512F32Kernel {
         Avx2F32Kernel.jarosz_compress(buffer, output);
     }
 
-    fn quantize(&mut self, input: &[f32; 16 * 16], output: &mut [u8; 2 * 16]) {
-        let mut out_buffer = Align64([0.0; 16]);
+    fn quantize(
+        &mut self,
+        input: &GenericArray<GenericArray<f32, U16>, U16>,
+        output: &mut [u8; 2 * 16],
+    ) {
         unsafe {
-            let shift1 = _mm512_set_epi32(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0);
-            let shift2 = _mm512_set_epi32(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1);
-            let shift4 = _mm512_set_epi32(4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3);
-            let shift8 = _mm512_set_epi32(8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7);
-
-            macro_rules! horizontal {
-                ($combine:ident($a:expr)) => {{
-                    let pairwise = $combine($a, _mm512_permutexvar_ps(shift1, $a));
-                    let every4 = $combine(pairwise, _mm512_permutexvar_ps(shift2, pairwise));
-                    let every8 = $combine(every4, _mm512_permutexvar_ps(shift4, every4));
-                    let every16 = $combine(every8, _mm512_permutexvar_ps(shift8, every8));
-
-                    _mm512_store_ps(out_buffer.0.as_mut_ptr(), every16);
-                    out_buffer.0[0]
-                }};
-            }
-
             let mut max_v = _mm512_set1_ps(f32::MIN);
             let mut min_v = _mm512_set1_ps(f32::MAX);
             for i in (0..(16 * 16)).step_by(16) {
-                let row = _mm512_loadu_ps(input.as_ptr().add(i));
+                let row = _mm512_loadu_ps(input.as_ptr().cast::<f32>().add(i));
                 min_v = _mm512_min_ps(min_v, row);
                 max_v = _mm512_max_ps(max_v, row);
             }
-            let mut max = horizontal!(_mm512_max_ps(max_v));
-            let mut min = horizontal!(_mm512_min_ps(min_v));
+            let mut max = _mm512_reduce_max_ps(max_v);
+            let mut min = _mm512_reduce_min_ps(min_v);
             let half_point = (16 * 16 / 2) as f32;
 
             let mut guess = (min + max) * 0.5;
@@ -445,7 +528,7 @@ impl Kernel for Avx512F32Kernel {
                 let min_v = _mm512_set1_ps(min);
                 let max_v = _mm512_set1_ps(max);
 
-                let mut row_ptr = input.as_ptr();
+                let mut row_ptr = input.as_ptr().cast::<f32>();
                 let mut output_ptr = output.as_mut_ptr().add(32 - 1);
                 macro_rules! do_loop {
                     (1) => {
@@ -511,17 +594,17 @@ impl Kernel for Avx512F32Kernel {
 
                 do_loop!(16);
 
-                let gt_count = horizontal!(_mm512_add_ps(resid_gt_count_v));
-                let lt_count = horizontal!(_mm512_add_ps(resid_lt_count_v));
+                let gt_count = _mm512_reduce_add_ps(resid_gt_count_v);
+                let lt_count = _mm512_reduce_add_ps(resid_lt_count_v);
 
                 if gt_count + num_over > half_point {
                     num_under += lt_count;
                     min = guess;
-                    guess = horizontal!(_mm512_add_ps(resid_sum_gt_v)) / gt_count;
+                    guess = _mm512_reduce_add_ps(resid_sum_gt_v) / gt_count;
                 } else if lt_count + num_under > half_point {
                     num_over += gt_count;
                     max = guess;
-                    guess = horizontal!(_mm512_add_ps(resid_sum_lt_v)) / lt_count;
+                    guess = _mm512_reduce_add_ps(resid_sum_lt_v) / lt_count;
                 } else {
                     break;
                 }
@@ -529,30 +612,12 @@ impl Kernel for Avx512F32Kernel {
         }
     }
 
-    fn sum_of_gradients(&mut self, input: &[f32; 16 * 16]) -> f32 {
+    fn sum_of_gradients(&mut self, input: &GenericArray<GenericArray<f32, U16>, U16>) -> f32 {
         unsafe {
-            let mut out_buffer = Align64([0.0; 16]);
-            let shift1 = _mm512_set_epi32(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0);
-            let shift2 = _mm512_set_epi32(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1);
-            let shift4 = _mm512_set_epi32(4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3);
-            let shift8 = _mm512_set_epi32(8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7);
-
-            macro_rules! horizontal {
-                ($combine:ident($a:expr)) => {{
-                    let pairwise = $combine($a, _mm512_permutexvar_ps(shift1, $a));
-                    let every4 = $combine(pairwise, _mm512_permutexvar_ps(shift2, pairwise));
-                    let every8 = $combine(every4, _mm512_permutexvar_ps(shift4, every4));
-                    let every16 = $combine(every8, _mm512_permutexvar_ps(shift8, every8));
-
-                    _mm512_store_ps(out_buffer.0.as_mut_ptr(), every16);
-                    out_buffer.0[0]
-                }};
-            }
-
             let mut sum_v = _mm512_setzero_ps();
-            let mut cur_row_0_16 = _mm512_loadu_ps(input.as_ptr());
+            let mut cur_row_0_16 = _mm512_loadu_ps(input.as_ptr().cast::<f32>());
             for i in 1..16 {
-                let next_row_0_16 = _mm512_loadu_ps(input.as_ptr().add(i * 16));
+                let next_row_0_16 = _mm512_loadu_ps(input.as_ptr().cast::<f32>().add(i * 16));
 
                 let diff_0 = _mm512_sub_ps(next_row_0_16, cur_row_0_16);
                 let diff_0_abs = _mm512_abs_ps(diff_0);
@@ -561,13 +626,13 @@ impl Kernel for Avx512F32Kernel {
                 cur_row_0_16 = next_row_0_16;
             }
 
-            let mut input_ptr = input.as_ptr();
+            let mut input_ptr = input.as_ptr().cast::<f32>();
 
             macro_rules! do_loop {
                 (1) => {
                     let shiftr1 =
-                        _mm512_set_epi32(0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
-                    let row0_0 = _mm512_loadu_ps(input_ptr);
+                        _mm512_set_epi32(14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0);
+                    let row0_0 = _mm512_loadu_ps(input_ptr.cast::<f32>());
                     let row0_0r = _mm512_permutexvar_ps(shiftr1, row0_0);
                     let diff = _mm512_sub_ps(row0_0r, row0_0);
                     let diff_abs = _mm512_abs_ps(diff);
@@ -597,14 +662,14 @@ impl Kernel for Avx512F32Kernel {
 
             do_loop!(16);
 
-            horizontal!(_mm512_add_ps(sum_v))
+            _mm512_reduce_add_ps(sum_v)
         }
     }
 
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
-        output: &mut [f32; 16 * 16],
+        output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
         unsafe {
             for k in 0..16 {
@@ -709,9 +774,87 @@ impl Kernel for Avx512F32Kernel {
 
                     do_loop!(128);
 
-                    output[k * 16 + j] = _mm512_reduce_add_ps(sumkh);
+                    output[k][j] = _mm512_reduce_add_ps(sumkh);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_avx2_horizontal_max_min_sum_ps() {
+        let mut out_buffer = Align32([0.0; 8]);
+        unsafe {
+            let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
+            let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
+            let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
+
+            macro_rules! horizontal {
+                (max($a:expr)) => {{
+                    let pairwise = _mm256_max_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_max_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_max_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (min($a:expr)) => {{
+                    let pairwise = _mm256_min_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_min_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_min_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (sum($a:expr)) => {{
+                    let pairwise = _mm256_add_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_add_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_add_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+            }
+
+            let case_0 = _mm256_set_ps(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0);
+            let case_1 = _mm256_set_ps(2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 1.0);
+            let case_2 = _mm256_set_ps(3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 1.0, 2.0);
+            let case_3 = _mm256_set_ps(4.0, 5.0, 6.0, 7.0, 8.0, 1.0, 2.0, 3.0);
+            let case_4 = _mm256_set_ps(5.0, 6.0, 7.0, 8.0, 1.0, 2.0, 3.0, 4.0);
+            let case_5 = _mm256_set_ps(6.0, 7.0, 8.0, 1.0, 2.0, 3.0, 4.0, 5.0);
+            let case_6 = _mm256_set_ps(7.0, 8.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
+            let case_7 = _mm256_set_ps(8.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0);
+
+            assert_eq!(horizontal!(max(case_0)), 8.0);
+            assert_eq!(horizontal!(max(case_1)), 8.0);
+            assert_eq!(horizontal!(max(case_2)), 8.0);
+            assert_eq!(horizontal!(max(case_3)), 8.0);
+            assert_eq!(horizontal!(max(case_4)), 8.0);
+            assert_eq!(horizontal!(max(case_5)), 8.0);
+            assert_eq!(horizontal!(max(case_6)), 8.0);
+            assert_eq!(horizontal!(max(case_7)), 8.0);
+            assert_eq!(horizontal!(min(case_0)), 1.0);
+            assert_eq!(horizontal!(min(case_1)), 1.0);
+            assert_eq!(horizontal!(min(case_2)), 1.0);
+            assert_eq!(horizontal!(min(case_3)), 1.0);
+            assert_eq!(horizontal!(min(case_4)), 1.0);
+            assert_eq!(horizontal!(min(case_5)), 1.0);
+            assert_eq!(horizontal!(min(case_6)), 1.0);
+            assert_eq!(horizontal!(min(case_7)), 1.0);
+            assert_eq!(horizontal!(sum(case_0)), 36.0);
+            assert_eq!(horizontal!(sum(case_1)), 36.0);
+            assert_eq!(horizontal!(sum(case_2)), 36.0);
+            assert_eq!(horizontal!(sum(case_3)), 36.0);
+            assert_eq!(horizontal!(sum(case_4)), 36.0);
+            assert_eq!(horizontal!(sum(case_5)), 36.0);
+            assert_eq!(horizontal!(sum(case_6)), 36.0);
+            assert_eq!(horizontal!(sum(case_7)), 36.0);
         }
     }
 }

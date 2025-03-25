@@ -23,10 +23,10 @@ use yume_pdq::GenericArray;
 
 fn main() {
     let mut input = Vec::<f32>::new();
-    input.resize(4096, 0.0);
+    input.resize(512 * 512, 0.0);
     let mut output = [0u8; 32];
     let mut buf1 = GenericArray::default();
-    let mut buf2 = [0.0; 16 * 16];
+    let mut buf2 = GenericArray::default();
 
     println!(
         "Avx2F32Kernel: {:?}",
@@ -36,6 +36,18 @@ fn main() {
             &mut output,
             &mut buf1,
             &mut buf2
+        )
+    );
+    let mut buf1_2 = GenericArray::default();
+    let mut buf2_2 = GenericArray::default();
+    println!(
+        "ReferenceKernel: {:?}",
+        yume_pdq::hash(
+            &mut yume_pdq::kernel::ReferenceKernel::<f32>::default(),
+            input.as_slice().try_into().unwrap(),
+            &mut output,
+            &mut buf1_2,
+            &mut buf2_2
         )
     );
 }

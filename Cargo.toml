@@ -6,9 +6,12 @@ authors = ["Yumechi <yume@yumechi.jp>"]
 description = "An optimized implementation of the PDQ hash function for high-throughput screening."
 license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/yume-pdq"
+build = "build.rs"
 
 [dependencies]
 generic-array = "1.2.0"
+num-traits = { version = "0.2", default-features = false }
+stacker = { version = "0.1", optional = true }
 
 [build-dependencies]
 derive_more = { version = "2", features = ["add", "add_assign", "mul_assign"] }
@@ -19,7 +22,8 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 image = "0.25.5"
 pdqhash = "0.1.1"
 rand = "0.9"
-rayon = "1.10.0"
+rayon = "1.10"
+stacker = "0.1"
 
 [[bench]]
 name = "pdq"
@@ -31,3 +35,4 @@ lto = true
 [features]
 std = []
 avx512 = []
+reference-stacker = ["dep:stacker"]

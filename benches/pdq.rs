@@ -1,11 +1,16 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use generic_array::typenum::U16;
 use rand::Rng;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
 use yume_pdq::{
     GenericArray,
-    kernel::{DefaultKernel, Kernel, x86},
+    kernel::{
+        DefaultKernel, Kernel,
+        dihedral::{hash_diagflip, hash_hflip, hash_vflip},
+        x86,
+    },
 };
 
 fn bench_dct2d(c: &mut Criterion) {
@@ -27,7 +32,7 @@ fn bench_dct2d(c: &mut Criterion) {
         }
         let mut kernel = DefaultKernel;
         b.iter(|| {
-            let mut output = [0.0; 16 * 16];
+            let mut output = GenericArray::default();
             kernel.dct2d(&input, &mut output);
             output
         });
@@ -44,9 +49,9 @@ fn bench_dct2d(c: &mut Criterion) {
                 input[i][j] = rng.random_range(0.0..1.0);
             }
         }
-        let mut kernel = yume_pdq::kernel::ReferenceKernel;
+        let mut kernel = yume_pdq::kernel::ReferenceKernel::<f32>::default();
         b.iter(|| {
-            let mut output = [0.0; 16 * 16];
+            let mut output = GenericArray::default();
             kernel.dct2d(&input, &mut output);
             output
         });
@@ -64,7 +69,7 @@ fn bench_dct2d(c: &mut Criterion) {
         }
         let mut kernel = x86::Avx2F32Kernel;
         b.iter(|| {
-            let mut output = [0.0; 16 * 16];
+            let mut output = GenericArray::default();
             kernel.dct2d(&input, &mut output);
             output
         });
@@ -83,7 +88,7 @@ fn bench_dct2d(c: &mut Criterion) {
         }
         let mut kernel = x86::Avx512F32Kernel;
         b.iter(|| {
-            let mut output = [0.0; 16 * 16];
+            let mut output = GenericArray::default();
             kernel.dct2d(&input, &mut output);
             output
         });
@@ -101,7 +106,7 @@ fn bench_jarosz_compress(c: &mut Criterion) {
 
     group.bench_function("reference", |b| {
         let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
-        let mut kernel = yume_pdq::kernel::ReferenceKernel;
+        let mut kernel = yume_pdq::kernel::ReferenceKernel::<f32>::default();
         b.iter(|| {
             let mut output = GenericArray::default();
             kernel.jarosz_compress(&input, &mut output);
@@ -140,7 +145,12 @@ fn bench_quantize(c: &mut Criterion) {
     ));
 
     group.bench_function("scalar", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input = GenericArray::<GenericArray<f32, U16>, U16>::default();
+        for i in 0..16 {
+            for j in 0..16 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = DefaultKernel;
         b.iter(|| {
             let mut output = [0; 2 * 16];
@@ -150,7 +160,12 @@ fn bench_quantize(c: &mut Criterion) {
     });
 
     group.bench_function("avx2", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input = GenericArray::<GenericArray<f32, U16>, U16>::default();
+        for i in 0..16 {
+            for j in 0..16 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = x86::Avx2F32Kernel;
         b.iter(|| {
             let mut output = [0; 2 * 16];
@@ -170,16 +185,84 @@ fn bench_sum_of_gradients(c: &mut Criterion) {
     ));
 
     group.bench_function("scalar", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input = GenericArray::<GenericArray<f32, U16>, U16>::default();
+        for i in 0..16 {
+            for j in 0..16 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = DefaultKernel;
         b.iter(|| kernel.sum_of_gradients(&input));
     });
 
     #[cfg(feature = "avx512")]
     group.bench_function("avx512", |b| {
-        let input = std::array::from_fn(|_| rng.random_range(0.0..1.0));
+        let mut input = GenericArray::<GenericArray<f32, U16>, U16>::default();
+        for i in 0..16 {
+            for j in 0..16 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
         let mut kernel = x86::Avx512F32Kernel;
         b.iter(|| kernel.sum_of_gradients(&input));
+    });
+}
+
+fn bench_hash_diagflip(c: &mut Criterion) {
+    let mut rng = rand::rng();
+
+    let mut group = c.benchmark_group("hash_diagflip");
+
+    group.throughput(criterion::Throughput::Bytes(
+        2 * 16 * std::mem::size_of::<u8>() as u64,
+    ));
+
+    group.bench_function("scalar", |b| {
+        let mut input = [0; 2 * 16];
+        rng.fill(&mut input);
+        b.iter(|| {
+            hash_diagflip(&mut input);
+            black_box(&input);
+            input
+        });
+    });
+}
+
+fn bench_hash_flip8(c: &mut Criterion) {
+    let mut rng = rand::rng();
+
+    let mut group = c.benchmark_group("hash_flip8");
+
+    group.throughput(criterion::Throughput::Bytes(
+        2 * 16 * std::mem::size_of::<u8>() as u64,
+    ));
+
+    group.bench_function("scalar", |b| {
+        let mut input = [0; 2 * 16];
+        rng.fill(&mut input);
+        b.iter(|| {
+            // flip horizontally to get a horizontally flipped version
+            hash_hflip(&mut input);
+            black_box(&input);
+            // flip vertically to get a vertically & horizontally flipped version
+            hash_vflip(&mut input);
+            black_box(&input);
+            // flip horizontally again to get the vertically flipped version
+            hash_hflip(&mut input);
+            black_box(&input);
+            // then flip diagonally to get a diagonally flipped version
+            hash_diagflip(&mut input);
+            black_box(&input);
+            // repeat after flipping diagonally
+            hash_hflip(&mut input);
+            black_box(&input);
+            hash_vflip(&mut input);
+            black_box(&input);
+            hash_hflip(&mut input);
+            black_box(&input);
+
+            input
+        });
     });
 }
 
@@ -197,11 +280,11 @@ fn bench_hash(c: &mut Criterion) {
         for _ in 0..(512 * 512) {
             input.push(rng.random_range(0.0..1.0));
         }
-        let mut kernel = yume_pdq::kernel::ReferenceKernel;
+        let mut kernel = yume_pdq::kernel::ReferenceKernel::<f32>::default();
         b.iter(|| {
             let mut output = [0; 2 * 16];
             let mut buf1 = GenericArray::default();
-            let mut buf2 = [0.0; 16 * 16];
+            let mut buf2 = GenericArray::default();
             yume_pdq::hash(
                 &mut kernel,
                 &input.as_slice().try_into().unwrap(),
@@ -222,7 +305,7 @@ fn bench_hash(c: &mut Criterion) {
         b.iter(|| {
             let mut output = [0; 2 * 16];
             let mut buf1 = GenericArray::default();
-            let mut buf2 = [0.0; 16 * 16];
+            let mut buf2 = GenericArray::default();
             yume_pdq::hash(
                 &mut kernel,
                 &input.as_slice().try_into().unwrap(),
@@ -243,7 +326,7 @@ fn bench_hash(c: &mut Criterion) {
         b.iter(|| {
             let mut output = [0; 2 * 16];
             let mut buf1 = GenericArray::default();
-            let mut buf2 = [0.0; 16 * 16];
+            let mut buf2 = GenericArray::default();
             yume_pdq::hash(
                 &mut kernel,
                 &input.as_slice().try_into().unwrap(),
@@ -265,7 +348,7 @@ fn bench_hash(c: &mut Criterion) {
         b.iter(|| {
             let mut output = [0; 2 * 16];
             let mut buf1 = GenericArray::default();
-            let mut buf2 = [0.0; 16 * 16];
+            let mut buf2 = GenericArray::default();
             yume_pdq::hash(
                 &mut kernel,
                 &input.as_slice().try_into().unwrap(),
@@ -313,9 +396,9 @@ fn bench_hash_par(c: &mut Criterion) {
                         .par_iter()
                         .zip(outputs.par_iter_mut())
                         .for_each(|(input, output)| {
-                            let mut kernel = yume_pdq::kernel::ReferenceKernel;
+                            let mut kernel = yume_pdq::kernel::ReferenceKernel::<f32>::default();
                             let mut buf1 = GenericArray::default();
-                            let mut buf2 = [0.0; 16 * 16];
+                            let mut buf2 = GenericArray::default();
                             yume_pdq::hash(
                                 &mut kernel,
                                 &input.as_slice().try_into().unwrap(),
@@ -348,7 +431,7 @@ fn bench_hash_par(c: &mut Criterion) {
                         .for_each(|(input, output)| {
                             let mut kernel = DefaultKernel;
                             let mut buf1 = GenericArray::default();
-                            let mut buf2 = [0.0; 16 * 16];
+                            let mut buf2 = GenericArray::default();
                             yume_pdq::hash(
                                 &mut kernel,
                                 &input.as_slice().try_into().unwrap(),
@@ -381,7 +464,7 @@ fn bench_hash_par(c: &mut Criterion) {
                         .for_each(|(input, output)| {
                             let mut kernel = x86::Avx2F32Kernel;
                             let mut buf1 = GenericArray::default();
-                            let mut buf2 = [0.0; 16 * 16];
+                            let mut buf2 = GenericArray::default();
                             yume_pdq::hash(
                                 &mut kernel,
                                 &input.as_slice().try_into().unwrap(),
@@ -415,7 +498,7 @@ fn bench_hash_par(c: &mut Criterion) {
                         .for_each(|(input, output)| {
                             let mut kernel = x86::Avx512F32Kernel;
                             let mut buf1 = GenericArray::default();
-                            let mut buf2 = [0.0; 16 * 16];
+                            let mut buf2 = GenericArray::default();
                             yume_pdq::hash(
                                 &mut kernel,
                                 &input.as_slice().try_into().unwrap(),
@@ -438,6 +521,8 @@ criterion_group!(
     bench_quantize,
     bench_sum_of_gradients,
     bench_hash,
-    bench_hash_par
+    bench_hash_par,
+    bench_hash_flip8,
+    bench_hash_diagflip
 );
 criterion_main!(benches);
