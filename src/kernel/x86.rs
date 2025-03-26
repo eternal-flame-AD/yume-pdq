@@ -26,25 +26,24 @@ use core::{
 
 use generic_array::{
     GenericArray,
-    typenum::{U16, U128},
+    sequence::Flatten,
+    typenum::{U2, U16, U128, U512},
 };
 
 use crate::kernel::Kernel;
 
 use super::{
-    CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_NCOLS, DCT_MATRIX_RMAJOR, TENT_FILTER_COLUMN_OFFSET,
-    TENT_FILTER_EFFECTIVE_ROWS, TENT_FILTER_WEIGHTS_X8,
+    CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_NCOLS, DCT_MATRIX_RMAJOR, QUALITY_ADJUST_DIVISOR,
+    TENT_FILTER_COLUMN_OFFSET, TENT_FILTER_EFFECTIVE_ROWS, TENT_FILTER_WEIGHTS_X8,
 };
 
 /// Compute kernel using hand-written AVX2 intrinsics.
 ///
-/// Note: This would produce a slightly different numeric result than reference implementation due to:
+/// Note: This would produce a slightly different numeric result than scalar implementation due to:
 ///
 /// - different rounding rules in the intrinsics by generally within 5 times epsilon (~5e-7) when tested on a random input.
-/// - rounding errors when convoluting using a pre-computed lookup table.
 ///
-/// On a test image usually we can do ~12 bits different than our reference implementation, when the official docs consider <10 bits different as "correct".
-/// This is still useful nevertheless for high-throughput matching as a matching threshold is <=31 by official docs, well within this error margin.
+/// Testing shows that the difference is usually within 1 bit (out of 256) on test images.
 ///
 /// Benchmark shows a ~10x improvement throughput over the generic (auto-vectorized) implementation, ~100x over the reference implementation.
 ///
@@ -58,6 +57,8 @@ pub struct Align32<T>(pub T);
 
 impl<T> Align32<T> {
     /// Convert a pointer to a `Align32<T>` to a reference.
+    ///
+    /// # Safety
     ///
     /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
     pub const unsafe fn from_raw_unchecked(ptr: *const T) -> *const Self {
@@ -80,6 +81,8 @@ impl<T> Align32<T> {
     }
 
     /// Convert a pointer to a `Align32<T>` to a mutable reference.
+    ///
+    /// # Safety
     ///
     /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
     pub const unsafe fn from_raw_mut_unchecked(ptr: *mut T) -> *mut Self {
@@ -134,14 +137,217 @@ impl<T> DerefMut for Align64<T> {
     }
 }
 
+impl Avx2F32Kernel {
+    #[inline(always)]
+    pub(crate) fn dct2d_impl(
+        dct_matrix_rmajor: &[f32; 16 * 127],
+        buffer: &GenericArray<GenericArray<f32, U128>, U128>,
+        output: &mut GenericArray<GenericArray<f32, U16>, U16>,
+    ) {
+        let mut out_buffer = Align32([0.0; 8]);
+        unsafe {
+            let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
+            let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
+            let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
+
+            macro_rules! horizontal {
+                (max($a:expr)) => {{
+                    let pairwise = _mm256_max_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_max_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_max_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (min($a:expr)) => {{
+                    let pairwise = _mm256_min_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_min_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_min_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+                (sum($a:expr)) => {{
+                    let pairwise = _mm256_add_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                    let every4 =
+                        _mm256_add_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                    let every8 = _mm256_add_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                    out_buffer.0[0]
+                }};
+            }
+
+            for k in 0..16 {
+                let mut tmp = [0.0; 128]; // pad one to avoid storing out of bounds
+
+                // vectorize j by 32x8 lanes, unroll inner loop by 8 w.r.t. DCT loading
+                for j_by_8 in (0..128).step_by(8) {
+                    let mut sumk = [_mm256_setzero_ps(); 2];
+
+                    let mut k2 = 0;
+                    let mut sum_target = true;
+
+                    macro_rules! do_loop {
+                        (1, $dct_row:expr, $dct_idx:expr) => {
+                            let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
+                            // Broadcast the i-th column of D^t, multiply with the j-th row of the image
+                            let dct =
+                                _mm256_permutevar8x32_ps($dct_row, _mm256_set1_epi32($dct_idx));
+                            // add the result to the sum
+                            sumk[sum_target as usize] = _mm256_fmadd_ps(buf_row, dct, sumk[sum_target as usize]);
+                        };
+                        (2, $dct_row:expr, $dct_idx:expr) => {
+                            do_loop!(1, $dct_row, $dct_idx);
+                            sum_target = !sum_target;
+                            $dct_idx += 1;
+                            k2 += 1;
+                            do_loop!(1, $dct_row, $dct_idx);
+                        };
+                        (4, $dct_row:expr, $dct_idx:expr) => {
+                            do_loop!(2, $dct_row, $dct_idx);
+                            $dct_idx += 1;
+                            k2 += 1;
+                            do_loop!(2, $dct_row, $dct_idx);
+                        };
+                        (8) => {
+                            // load one whole row of DCT matrix (i.e. one column of D^t)
+                            let dct_row = _mm256_loadu_ps(
+                                dct_matrix_rmajor.as_ptr().add(k * DCT_MATRIX_NCOLS + k2),
+                            );
+                            let mut dct_idx = 0;
+                            do_loop!(4, dct_row, dct_idx);
+                            dct_idx += 1;
+                            k2 += 1;
+                            do_loop!(4, dct_row, dct_idx);
+                        };
+                        (16) => {
+                            do_loop!(8);
+                            k2 += 1;
+                            do_loop!(8);
+                        };
+                        (32) => {
+                            do_loop!(16);
+                            k2 += 1;
+                            do_loop!(16);
+                        };
+                        (64) => {
+                            do_loop!(32);
+                            k2 += 1;
+                            do_loop!(32);
+                        };
+                        (128) => {
+                            do_loop!(64);
+                            k2 += 1;
+                            do_loop!(64);
+                        };
+                    }
+
+                    do_loop!(128);
+
+                    _mm256_storeu_ps(
+                        tmp.as_mut_ptr().add(j_by_8),
+                        _mm256_add_ps(sumk[0], sumk[1]),
+                    );
+                }
+
+                for j in 0..16 {
+                    let mut tmp_ptr = tmp.as_ptr();
+                    let mut sumkh = [_mm256_setzero_ps(); 2];
+                    let mut sum_target = true;
+
+                    let mut dct_ptr = dct_matrix_rmajor.as_ptr().add(j * DCT_MATRIX_NCOLS);
+
+                    macro_rules! do_loop {
+                        (8) => {
+                            sumkh[sum_target as usize] = _mm256_fmadd_ps(
+                                _mm256_loadu_ps(tmp_ptr),
+                                _mm256_loadu_ps(dct_ptr),
+                                sumkh[sum_target as usize],
+                            );
+                        };
+                        (16) => {
+                            do_loop!(8);
+                            sum_target = !sum_target;
+                            tmp_ptr = tmp_ptr.add(8);
+                            dct_ptr = dct_ptr.add(8);
+                            do_loop!(8);
+                        };
+                        (32) => {
+                            do_loop!(16);
+                            tmp_ptr = tmp_ptr.add(8);
+                            dct_ptr = dct_ptr.add(8);
+                            do_loop!(16);
+                        };
+                        (64) => {
+                            do_loop!(32);
+                            tmp_ptr = tmp_ptr.add(8);
+                            dct_ptr = dct_ptr.add(8);
+                            do_loop!(32);
+                        };
+                        (128) => {
+                            do_loop!(64);
+                            tmp_ptr = tmp_ptr.add(8);
+                            dct_ptr = dct_ptr.add(8);
+                            do_loop!(64);
+                        };
+                    }
+
+                    do_loop!(128);
+
+                    let sumkh = _mm256_add_ps(sumkh[0], sumkh[1]);
+
+                    output[k][j] = horizontal!(sum(sumkh)) - (*tmp_ptr.add(7) * *dct_ptr.add(7));
+                }
+            }
+        }
+    }
+}
+
 impl Kernel for Avx2F32Kernel {
     type Buffer1WidthX = U128;
     type Buffer1LengthY = U128;
     type InternalFloat = f32;
+    type InputDimension = U512;
+    type OutputDimension = U16;
+
+    fn adjust_quality(input: Self::InternalFloat) -> f32 {
+        let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
+
+        scaled.min(1.0)
+    }
+
+    fn sum_of_gradients(
+        &mut self,
+        input: &GenericArray<GenericArray<Self::InternalFloat, U16>, U16>,
+    ) -> Self::InternalFloat {
+        let mut gradient_sum = Default::default();
+
+        for i in 0..(16 - 1) {
+            for j in 0..16 {
+                let u = input[i][j];
+                let v = input[i + 1][j];
+                let d = u - v;
+                gradient_sum += d.abs();
+            }
+        }
+
+        for i in 0..16 {
+            for j in 0..(16 - 1) {
+                let u = input[i][j];
+                let v = input[i][j + 1];
+                let d = u - v;
+                gradient_sum += d.abs();
+            }
+        }
+
+        gradient_sum
+    }
 
     fn jarosz_compress(
         &mut self,
-        buffer: &[f32; 512 * 512],
+        buffer: &GenericArray<GenericArray<f32, U512>, U512>,
         output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
     ) {
         unsafe {
@@ -153,7 +359,9 @@ impl Kernel for Avx2F32Kernel {
                     let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                     let mut sum = _mm256_setzero_ps();
                     for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
-                        let buffer = _mm256_loadu_ps(buffer.as_ptr().add((in_i + di) * 512 + in_j));
+                        let buffer = _mm256_loadu_ps(
+                            buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j),
+                        );
                         let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
                         sum = _mm256_fmadd_ps(buffer, weights, sum);
                     }
@@ -169,7 +377,8 @@ impl Kernel for Avx2F32Kernel {
     fn quantize(
         &mut self,
         input: &GenericArray<GenericArray<f32, U16>, U16>,
-        output: &mut [u8; 2 * 16],
+        threshold: &mut Self::InternalFloat,
+        output: &mut GenericArray<GenericArray<u8, U2>, U16>,
     ) {
         let mut out_buffer = Align32([0.0; 8]);
         unsafe {
@@ -240,7 +449,7 @@ impl Kernel for Avx2F32Kernel {
                 let max_v = _mm256_set1_ps(max);
 
                 let mut row_ptr = input.as_ptr().cast::<f32>();
-                let mut output_ptr = output.as_mut_ptr().add(32 - 1);
+                let mut output_ptr = output.flatten().as_mut_ptr().add(32 - 1);
                 macro_rules! do_loop {
                     (1) => {
                         let row = _mm256_loadu_ps(row_ptr);
@@ -314,7 +523,8 @@ impl Kernel for Avx2F32Kernel {
                     break;
                 }
             }
-        }
+            *threshold = guess;
+        } // unsafe
     }
 
     // sum of gradients is a pretty auto-vectorizable operation (and benchmark shows the same performance), so we will let it do what it thinks is best for the target architecture
@@ -324,156 +534,7 @@ impl Kernel for Avx2F32Kernel {
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        let mut out_buffer = Align32([0.0; 8]);
-        unsafe {
-            let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
-            let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
-            let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
-
-            macro_rules! horizontal {
-                (max($a:expr)) => {{
-                    let pairwise = _mm256_max_ps($a, _mm256_permutevar8x32_ps($a, shift1));
-                    let every4 =
-                        _mm256_max_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
-                    let every8 = _mm256_max_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
-                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
-                    out_buffer.0[0]
-                }};
-                (min($a:expr)) => {{
-                    let pairwise = _mm256_min_ps($a, _mm256_permutevar8x32_ps($a, shift1));
-                    let every4 =
-                        _mm256_min_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
-                    let every8 = _mm256_min_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
-
-                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
-                    out_buffer.0[0]
-                }};
-                (sum($a:expr)) => {{
-                    let pairwise = _mm256_add_ps($a, _mm256_permutevar8x32_ps($a, shift1));
-                    let every4 =
-                        _mm256_add_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
-                    let every8 = _mm256_add_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
-
-                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
-                    out_buffer.0[0]
-                }};
-            }
-
-            for k in 0..16 {
-                let mut tmp = [0.0; 128]; // pad one to avoid storing out of bounds
-
-                // vectorize j by 32x8 lanes, unroll inner loop by 8 w.r.t. DCT loading
-                for j_by_8 in (0..128).step_by(8) {
-                    let mut sumk = _mm256_setzero_ps();
-
-                    let mut k2 = 0;
-
-                    macro_rules! do_loop {
-                        (1, $dct_row:expr, $dct_idx:expr) => {
-                            let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
-                            // Broadcast the i-th column of D^t, multiply with the j-th row of the image
-                            let dct =
-                                _mm256_permutevar8x32_ps($dct_row, _mm256_set1_epi32($dct_idx));
-                            // add the result to the sum
-                            sumk = _mm256_fmadd_ps(buf_row, dct, sumk);
-                        };
-                        (2, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(1, $dct_row, $dct_idx);
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(1, $dct_row, $dct_idx);
-                        };
-                        (4, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(2, $dct_row, $dct_idx);
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(2, $dct_row, $dct_idx);
-                        };
-                        (8) => {
-                            // load one whole row of DCT matrix (i.e. one column of D^t)
-                            let dct_row = _mm256_loadu_ps(
-                                DCT_MATRIX_RMAJOR.as_ptr().add(k * DCT_MATRIX_NCOLS + k2),
-                            );
-                            let mut dct_idx = 0;
-                            do_loop!(4, dct_row, dct_idx);
-                            dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(4, dct_row, dct_idx);
-                        };
-                        (16) => {
-                            do_loop!(8);
-                            k2 += 1;
-                            do_loop!(8);
-                        };
-                        (32) => {
-                            do_loop!(16);
-                            k2 += 1;
-                            do_loop!(16);
-                        };
-                        (64) => {
-                            do_loop!(32);
-                            k2 += 1;
-                            do_loop!(32);
-                        };
-                        (128) => {
-                            do_loop!(64);
-                            k2 += 1;
-                            do_loop!(64);
-                        };
-                    }
-
-                    do_loop!(128);
-
-                    _mm256_storeu_ps(tmp.as_mut_ptr().add(j_by_8), sumk);
-                }
-
-                for j in 0..16 {
-                    let mut tmp_ptr = tmp.as_ptr();
-                    let zero = _mm256_setzero_ps();
-                    let mut sumkh = zero;
-
-                    let mut dct_ptr = DCT_MATRIX_RMAJOR.as_ptr().add(j * DCT_MATRIX_NCOLS);
-
-                    macro_rules! do_loop {
-                        (8) => {
-                            sumkh = _mm256_fmadd_ps(
-                                _mm256_loadu_ps(tmp_ptr),
-                                _mm256_loadu_ps(dct_ptr),
-                                sumkh,
-                            );
-                        };
-                        (16) => {
-                            do_loop!(8);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
-                            do_loop!(8);
-                        };
-                        (32) => {
-                            do_loop!(16);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
-                            do_loop!(16);
-                        };
-                        (64) => {
-                            do_loop!(32);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
-                            do_loop!(32);
-                        };
-                        (128) => {
-                            do_loop!(64);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
-                            do_loop!(64);
-                        };
-                    }
-
-                    do_loop!(128);
-
-                    output[k][j] = horizontal!(sum(sumkh)) - (*tmp_ptr.add(7) * *dct_ptr.add(7));
-                }
-            }
-        }
+        Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, output);
     }
 }
 
@@ -488,10 +549,18 @@ impl Kernel for Avx512F32Kernel {
     type Buffer1WidthX = U128;
     type Buffer1LengthY = U128;
     type InternalFloat = f32;
+    type InputDimension = U512;
+    type OutputDimension = U16;
+
+    fn adjust_quality(input: Self::InternalFloat) -> f32 {
+        let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
+
+        scaled.min(1.0)
+    }
 
     fn jarosz_compress(
         &mut self,
-        buffer: &[f32; 512 * 512],
+        buffer: &GenericArray<GenericArray<f32, U512>, U512>,
         output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
     ) {
         // this part requires serious unrolling to overcome suboptimal memory access patterns
@@ -502,7 +571,8 @@ impl Kernel for Avx512F32Kernel {
     fn quantize(
         &mut self,
         input: &GenericArray<GenericArray<f32, U16>, U16>,
-        output: &mut [u8; 2 * 16],
+        threshold: &mut Self::InternalFloat,
+        output: &mut GenericArray<GenericArray<u8, U2>, U16>,
     ) {
         unsafe {
             let mut max_v = _mm512_set1_ps(f32::MIN);
@@ -529,7 +599,7 @@ impl Kernel for Avx512F32Kernel {
                 let max_v = _mm512_set1_ps(max);
 
                 let mut row_ptr = input.as_ptr().cast::<f32>();
-                let mut output_ptr = output.as_mut_ptr().add(32 - 1);
+                let mut output_ptr = output.flatten().as_mut_ptr().add(32 - 1);
                 macro_rules! do_loop {
                     (1) => {
                         let row = _mm512_loadu_ps(row_ptr);
@@ -609,7 +679,8 @@ impl Kernel for Avx512F32Kernel {
                     break;
                 }
             }
-        }
+            *threshold = guess;
+        } // unsafe
     }
 
     fn sum_of_gradients(&mut self, input: &GenericArray<GenericArray<f32, U16>, U16>) -> f32 {
@@ -677,18 +748,20 @@ impl Kernel for Avx512F32Kernel {
 
                 // vectorize j by 32x16 lanes, unroll inner loop by 16 w.r.t. DCT loading
                 for j_by_16 in (0..128).step_by(16) {
-                    let mut sumk = _mm512_setzero_ps();
+                    let mut sumks = [_mm512_setzero_ps(); 2];
 
                     let mut k2 = 0;
-
+                    let mut sum_target = true;
                     macro_rules! do_loop {
                         (1, $dct_row:expr, $dct_idx:expr) => {
                             let buf_row = _mm512_loadu_ps(&buffer[k2][j_by_16]);
                             let dct = _mm512_permutexvar_ps(_mm512_set1_epi32($dct_idx), $dct_row);
-                            sumk = _mm512_fmadd_ps(buf_row, dct, sumk);
+                            sumks[sum_target as usize] =
+                                _mm512_fmadd_ps(buf_row, dct, sumks[sum_target as usize]);
                         };
                         (2, $dct_row:expr, $dct_idx:expr) => {
                             do_loop!(1, $dct_row, $dct_idx);
+                            sum_target = !sum_target;
                             $dct_idx += 1;
                             k2 += 1;
                             do_loop!(1, $dct_row, $dct_idx);
@@ -734,28 +807,31 @@ impl Kernel for Avx512F32Kernel {
 
                     do_loop!(128);
 
+                    let sumk = _mm512_add_ps(sumks[0], sumks[1]);
+
                     _mm512_storeu_ps(tmp.as_mut_ptr().add(j_by_16), sumk);
                 }
 
                 for j in 0..16 {
                     let mut tmp_ptr = tmp.as_ptr();
-                    let zero = _mm512_setzero_ps();
-                    let mut sumkh = zero;
+                    let mut sumkhs = [_mm512_setzero_ps(); 2];
+                    let mut sum_target = true;
 
                     let mut dct_ptr = DCT_MATRIX_RMAJOR.as_ptr().add(j * DCT_MATRIX_NCOLS);
 
                     macro_rules! do_loop {
                         (16) => {
-                            sumkh = _mm512_fmadd_ps(
+                            sumkhs[sum_target as usize] = _mm512_fmadd_ps(
                                 _mm512_loadu_ps(tmp_ptr),
                                 _mm512_loadu_ps(dct_ptr),
-                                sumkh,
+                                sumkhs[sum_target as usize],
                             );
                         };
                         (32) => {
                             do_loop!(16);
                             tmp_ptr = tmp_ptr.add(16);
                             dct_ptr = dct_ptr.add(16);
+                            sum_target = !sum_target;
                             do_loop!(16);
                         };
                         (64) => {
@@ -774,7 +850,8 @@ impl Kernel for Avx512F32Kernel {
 
                     do_loop!(128);
 
-                    output[k][j] = _mm512_reduce_add_ps(sumkh);
+                    output[k][j] =
+                        _mm512_reduce_add_ps(sumkhs[0]) + _mm512_reduce_add_ps(sumkhs[1]);
                 }
             }
         }

@@ -1,15 +1,7 @@
-///! Compute PDQ hash of an image.
-
-///! The PDQ algorithm was developed and open-sourced by Facebook (now Meta) in 2019.
-
-///! It specifies a transformation which converts images into a binary format ('PDQ Hash') whereby 'perceptually similar’ images produce similar outputs.
-
-///! It was designed to offer an industry standard for representing images to collaborate on threat mitigation.
-
-//  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// readapted straight from pdqhash crate, not part of a user-facing build, mainly used for testing kernels
 
 pub fn compute_jarosz_filter_window_size(old_dimension: usize, new_dimension: usize) -> usize {
-    (old_dimension + 2 * new_dimension - 1) / (2 * new_dimension)
+    old_dimension.div_ceil(2 * new_dimension)
 }
 
 pub fn jarosz_filter_float<
@@ -17,7 +9,7 @@ pub fn jarosz_filter_float<
         + std::ops::Div<Output = F>
         + std::ops::AddAssign<F>
         + std::ops::SubAssign<F>
-        + Copy
+        + Clone
         + Default,
 >(
     buffer1: &mut [F; 512 * 512], // matrix as num_rows x num_cols in row-major order
@@ -59,13 +51,12 @@ pub fn jarosz_filter_float<
 // It should compile a version for each.
 
 #[inline(always)]
-
 fn box_one_d_float<
     F: num_traits::FromPrimitive
         + std::ops::Div<Output = F>
         + std::ops::AddAssign<F>
         + std::ops::SubAssign<F>
-        + Copy
+        + Clone
         + Default,
 >(
     invec: &[F],
@@ -99,7 +90,7 @@ fn box_one_d_float<
     // PHASE 1: ACCUMULATE FIRST SUM NO WRITES
 
     for ri in (in_start_offset..phase_1_end).step_by(stride) {
-        let value = invec[ri];
+        let value = invec[ri].clone();
 
         sum += value;
 
@@ -113,11 +104,11 @@ fn box_one_d_float<
     for ri in (phase_1_end..phase_2_end).step_by(stride) {
         let oi = ri - oi_off;
 
-        sum += invec[ri];
+        sum += invec[ri].clone();
 
         current_window_size += F::from_f32(1.0).unwrap();
 
-        outvec[oi] = sum / current_window_size;
+        outvec[oi] = sum.clone() / current_window_size.clone();
     }
 
     let phase_3_end = vector_length * stride + in_start_offset;
@@ -129,11 +120,11 @@ fn box_one_d_float<
 
         let li = oi - li_off;
 
-        sum += invec[ri];
+        sum += invec[ri].clone();
 
-        sum -= invec[li];
+        sum -= invec[li].clone();
 
-        outvec[oi] = sum / (current_window_size);
+        outvec[oi] = sum.clone() / current_window_size.clone();
     }
 
     let phase_4_start = (vector_length - half_window_size + 1) * stride + in_start_offset;
@@ -143,11 +134,11 @@ fn box_one_d_float<
     for oi in (phase_4_start..phase_3_end).step_by(stride) {
         let li = oi - li_off;
 
-        sum -= invec[li];
+        sum -= invec[li].clone();
 
         current_window_size += F::from_f32(-1.0).unwrap();
 
-        outvec[oi] = sum / current_window_size;
+        outvec[oi] = sum.clone() / current_window_size.clone();
     }
 }
 
@@ -158,7 +149,7 @@ fn box_along_rows_float<
         + std::ops::Div<Output = F>
         + std::ops::AddAssign<F>
         + std::ops::SubAssign<F>
-        + Copy
+        + Clone
         + Default,
 >(
     input: &[F], // matrix as num_rows x num_cols in row-major order
@@ -183,7 +174,7 @@ fn box_along_cols_float<
         + std::ops::Div<Output = F>
         + std::ops::AddAssign<F>
         + std::ops::SubAssign<F>
-        + Copy
+        + Clone
         + Default,
 >(
     input: &[F], // matrix as num_rows x num_cols in row-major order
@@ -198,34 +189,6 @@ fn box_along_cols_float<
 ) {
     for j in 0..n_cols {
         box_one_d_float(input, j, output, n_rows, n_cols, window_size);
-    }
-}
-
-// ----------------------------------------------------------------
-
-pub fn decimate_float<
-    F: num_traits::FromPrimitive + Copy,
-    const OUT_NUM_ROWS: usize,
-    const OUT_NUM_COLS: usize,
->(
-    input: &[F], // matrix as in_num_rows x in_num_cols in row-major order
-
-    in_num_rows: usize,
-
-    in_num_cols: usize,
-
-    output: &mut [[F; OUT_NUM_COLS]; OUT_NUM_ROWS],
-) {
-    // target centers not corners:
-
-    for outi in 0..OUT_NUM_ROWS {
-        let ini = ((outi * 2 + 1) * in_num_rows) / (OUT_NUM_ROWS * 2);
-
-        for outj in 0..OUT_NUM_COLS {
-            let inj = ((outj * 2 + 1) * in_num_cols) / (OUT_NUM_COLS * 2);
-
-            output[outi][outj] = input[ini * in_num_cols + inj];
-        }
     }
 }
 

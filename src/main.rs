@@ -19,12 +19,13 @@
  * limitations under the License.
  */
 
-use yume_pdq::GenericArray;
+use generic_array::typenum::U16;
+use yume_pdq::{GenericArray, PDQHash, kernel::SquareGenericArrayExt};
 
 fn main() {
     let mut input = Vec::<f32>::new();
     input.resize(512 * 512, 0.0);
-    let mut output = [0u8; 32];
+    let mut output = PDQHash::<U16>::default();
     let mut buf1 = GenericArray::default();
     let mut buf2 = GenericArray::default();
 
@@ -32,7 +33,7 @@ fn main() {
         "Avx2F32Kernel: {:?}",
         yume_pdq::hash(
             &mut yume_pdq::kernel::x86::Avx2F32Kernel,
-            input.as_slice().try_into().unwrap(),
+            &GenericArray::<_, _>::from_slice(input.as_slice()).unflatten_square(),
             &mut output,
             &mut buf1,
             &mut buf2

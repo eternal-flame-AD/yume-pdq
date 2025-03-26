@@ -2,6 +2,7 @@
     "rust-analyzer.cargo.features": [
         "avx512",
         "std",
+        "reference-rug",
     ],
     "psi-header.config": {
         "license": "Custom"

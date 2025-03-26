@@ -11,19 +11,20 @@ build = "build.rs"
 [dependencies]
 generic-array = "1.2.0"
 num-traits = { version = "0.2", default-features = false }
-stacker = { version = "0.1", optional = true }
+rug = { version = "1.27", optional = true }
+derive_more = { version = "2", features = ["add", "add_assign", "mul", "mul_assign", "not"], optional = true }
 
 [build-dependencies]
 derive_more = { version = "2", features = ["add", "add_assign", "mul_assign"] }
-rug = "1.27.0"
+rug = "1.27"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
-image = "0.25.5"
+image = "0.25"
 pdqhash = "0.1.1"
 rand = "0.9"
 rayon = "1.10"
-stacker = "0.1"
+rug = "1.27"
 
 [[bench]]
 name = "pdq"
@@ -35,4 +36,5 @@ lto = true
 [features]
 std = []
 avx512 = []
-reference-stacker = ["dep:stacker"]
+reference-rug = ["std", "dep:rug", "dep:derive_more"]
+unstable = []

@@ -19,6 +19,7 @@
  * limitations under the License.
  */
 
+#![allow(clippy::needless_range_loop)]
 use std::{
     fmt::Debug,
     fs::File,
@@ -132,6 +133,40 @@ impl<const PREC: u32> MiniFloat for MultiPrecF<PREC> {
     fn sqrt(self) -> Self {
         Self(self.0.sqrt())
     }
+}
+
+fn generate_typename_for_typeint(x: u64) -> String {
+    let mut lhs = String::new();
+    let mut rhs = String::new();
+    let binary_repr = format!("{:b}", x);
+    for (ix, x) in binary_repr.chars().enumerate() {
+        lhs.push_str("::generic_array::typenum::UInt<");
+        if ix > 0 {
+            rhs.push_str(", ");
+        }
+        if x == '1' {
+            rhs.push_str("::generic_array::typenum::bit::B1>");
+        } else {
+            rhs.push_str("::generic_array::typenum::bit::B0>");
+        }
+    }
+    format!("{}::generic_array::typenum::uint::UTerm, {}", lhs, rhs)
+}
+
+fn generate_square_generic_array_impl<W: Write>(file: &mut W, x: u64) {
+    writeln!(
+        file,
+        "impl SquareOf for {} {{",
+        generate_typename_for_typeint(x)
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "    type Output = {};",
+        generate_typename_for_typeint(x * x)
+    )
+    .unwrap();
+    writeln!(file, "}}").unwrap();
 }
 
 // taken from an officially-endorsed reference implementation with some slight modifications to prefer accuracy over speed
@@ -255,7 +290,7 @@ mod mean_box {
     }
 
     pub fn compute_jarosz_filter_window_size(old_dimension: usize, new_dimension: usize) -> usize {
-        (old_dimension + 2 * new_dimension - 1) / (2 * new_dimension)
+        old_dimension.div_ceil(2 * new_dimension)
     }
 }
 
@@ -342,6 +377,15 @@ fn main() {
     out_convolution_offset_path.push("convolution_offset.rs");
     let mut dihedral_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     dihedral_path.push("dihedral.rs");
+    let mut square_generic_array_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    square_generic_array_path.push("square_generic_array.rs");
+
+    let mut file = File::create(square_generic_array_path).unwrap();
+    file.set_len(0).unwrap();
+    for i in 1..=2048 {
+        generate_square_generic_array_impl(&mut file, i);
+    }
+    file.flush().unwrap();
 
     let mut dihedral_file = File::create(dihedral_path).unwrap();
     dihedral_file.set_len(0).unwrap();
@@ -350,7 +394,7 @@ fn main() {
         "/// Lookup table for flipping a byte horizontally"
     )
     .unwrap();
-    writeln!(dihedral_file, "const FLIP_U8: [u8; 256] = [").unwrap();
+    writeln!(dihedral_file, "pub const FLIP_U8: [u8; 256] = [").unwrap();
     for input in 0..=u8::MAX {
         let mut out = 0;
         for j in 0..8 {
@@ -362,7 +406,7 @@ fn main() {
         write!(dihedral_file, "0b{:08b},", out).unwrap();
     }
     writeln!(dihedral_file, "];").unwrap();
-    writeln!(dihedral_file, "").unwrap();
+    writeln!(dihedral_file).unwrap();
     writeln!(
         dihedral_file,
         "/// Lookup table for expanding a byte value into 8 masks"
@@ -379,7 +423,7 @@ fn main() {
         writeln!(dihedral_file, "], ").unwrap();
     }
     writeln!(dihedral_file, "];").unwrap();
-    writeln!(dihedral_file, "").unwrap();
+    writeln!(dihedral_file).unwrap();
 
     dihedral_file.flush().unwrap();
 
@@ -410,7 +454,7 @@ fn main() {
     }
     writeln!(file, "];").unwrap();
 
-    writeln!(file, "").unwrap();
+    writeln!(file).unwrap();
     writeln!(file, "/// The DCT matrix in row-major order (f64)").unwrap();
     writeln!(
         file,
@@ -432,7 +476,7 @@ fn main() {
     }
     writeln!(file, "];").unwrap();
 
-    writeln!(file, "").unwrap();
+    writeln!(file).unwrap();
 
     file.flush().unwrap();
 
@@ -506,7 +550,7 @@ fn main() {
 
     writeln!(tent_file, "];").unwrap();
 
-    writeln!(tent_file, "").unwrap();
+    writeln!(tent_file).unwrap();
 
     writeln!(
         tent_file,
@@ -559,7 +603,7 @@ fn main() {
         writeln!(
             convolution_offset_file,
             "    {}, // {} -> {}",
-            (in_i.round() as usize).max(0).min(511),
+            (in_i.round() as usize).clamp(0, 511),
             out_i,
             in_i
         )
