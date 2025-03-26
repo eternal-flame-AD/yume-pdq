@@ -23,7 +23,10 @@
  * limitations under the License.
  */
 
-use core::fmt::{Debug, Display};
+use core::{
+    fmt::{Debug, Display},
+    ops::Mul,
+};
 
 #[cfg_attr(not(feature = "reference-rug"), allow(unused_imports))]
 use generic_array::{
@@ -50,9 +53,8 @@ pub mod x86;
 /// 128-bit floating point type.
 pub mod float128;
 
-/// Dihedral flips.
-#[cfg(feature = "unstable")]
-pub mod dihedral;
+// potentially incorrect, don't use it for now
+// pub mod dihedral;
 
 /// Thresholding methods.
 pub mod threshold;
@@ -93,7 +95,7 @@ impl<I, L: ArrayLength> Sealed for GenericArray<I, L> {}
 
 impl<I, L: SquareOf> SquareGenericArrayExt<I, L> for GenericArray<I, <L as SquareOf>::Output> {}
 
-/// Marker trait to indicate that this kernel produces precise results.
+/// Marker trait to indicate that this kernel produces precise results (i.e. no lossy LUTs).
 pub trait PreciseKernel: Kernel {}
 
 // Copied verbatim from [darwinium-com/pdqhash](https://github.com/darwinium-com/pdqhash/blob/main/src/lib.rs).
@@ -141,7 +143,7 @@ pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>,
 }
 
 /// The divisor for the quality adjustment offset.
-pub const QUALITY_ADJUST_DIVISOR: usize = 256 * 2048 * 64;
+pub const QUALITY_ADJUST_DIVISOR: usize = 180;
 
 // reference: https://raw.githubusercontent.com/facebook/ThreatExchange/main/hashing/hashing.pdf
 
@@ -152,7 +154,10 @@ pub const QUALITY_ADJUST_DIVISOR: usize = 256 * 2048 * 64;
 /// A typical matching threshold is distance <=31 bits out of 256, well within the error margin.
 ///
 /// A scalar (auto-vectorized) implementation is provided in [`DefaultKernel`].
-pub trait Kernel {
+pub trait Kernel
+where
+    <Self::OutputDimension as Mul<Self::OutputDimension>>::Output: ArrayLength,
+{
     /// The width of the first stage (compression) buffer.
     type Buffer1WidthX: ArrayLength;
     /// The length of the first stage (compression) buffer.
@@ -160,7 +165,7 @@ pub trait Kernel {
     /// The width and height of the input image.
     type InputDimension: ArrayLength + SquareOf;
     /// The width and height of the output hash.
-    type OutputDimension: ArrayLength + SquareOf;
+    type OutputDimension: ArrayLength + SquareOf + Mul<Self::OutputDimension>;
 
     /// The internal floating point type used for intermediate calculations.
     type InternalFloat: num_traits::float::TotalOrder
@@ -365,6 +370,8 @@ pub struct ReferenceKernel<N: num_traits::FromPrimitive = f32> {
 #[cfg(any(feature = "std", test))]
 impl PreciseKernel for ReferenceKernel<f32> {}
 
+#[cfg(any(feature = "std", test))]
+impl PreciseKernel for ReferenceKernel<f64> {}
 #[cfg(any(feature = "std", test))]
 impl Kernel for ReferenceKernel<f32> {
     type Buffer1WidthX = U127;
@@ -790,6 +797,9 @@ impl<const C: u32> Kernel for ReferenceKernel<float128::ArbFloat<C>> {
     }
 }
 
+#[cfg(feature = "reference-rug")]
+impl<const C: u32> PreciseKernel for ReferenceKernel<float128::ArbFloat<C>> {}
+
 #[cfg(test)]
 mod tests {
     use num_traits::NumCast;
@@ -804,6 +814,8 @@ mod tests {
     where
         ReferenceKernel<<K as Kernel>::InternalFloat>:
             Kernel<InternalFloat = <K as Kernel>::InternalFloat, OutputDimension = OD>,
+        OD: Mul<OD>,
+        <OD as Mul<OD>>::Output: ArrayLength,
     {
         let mut rng = rand::rng();
         let mut input: GenericArray<GenericArray<<K as Kernel>::InternalFloat, OD>, OD> =

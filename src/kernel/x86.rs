@@ -19,10 +19,7 @@
  * limitations under the License.
  */
 
-use core::{
-    arch::x86_64::*,
-    ops::{Deref, DerefMut},
-};
+use core::arch::x86_64::*;
 
 use generic_array::{
     GenericArray,
@@ -30,7 +27,7 @@ use generic_array::{
     typenum::{U2, U16, U128, U512},
 };
 
-use crate::kernel::Kernel;
+use crate::{alignment::Align32, kernel::Kernel};
 
 use super::{
     CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_NCOLS, DCT_MATRIX_RMAJOR, QUALITY_ADJUST_DIVISOR,
@@ -50,92 +47,6 @@ use super::{
 /// Note: You MUST compile with `target-feature=+avx2` (or equivalent) to use this kernel, otherwise a very slow
 /// fallback will be emitted by LLVM.
 pub struct Avx2F32Kernel;
-
-#[repr(align(32))]
-/// Align the item to 32 bytes.
-pub struct Align32<T>(pub T);
-
-impl<T> Align32<T> {
-    /// Convert a pointer to a `Align32<T>` to a reference.
-    ///
-    /// # Safety
-    ///
-    /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
-    pub const unsafe fn from_raw_unchecked(ptr: *const T) -> *const Self {
-        ptr as *const Self
-    }
-
-    /// Convert a reference to a `T` to a reference to a `Align32<T>`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the reference is not aligned to 32 bytes.
-    pub fn from_raw(input: &T) -> &Self {
-        let ptr = input as *const T;
-        assert_eq!(
-            ptr.align_offset(32),
-            0,
-            "pointer is not aligned to 32 bytes"
-        );
-        unsafe { &*(ptr as *const Self) }
-    }
-
-    /// Convert a pointer to a `Align32<T>` to a mutable reference.
-    ///
-    /// # Safety
-    ///
-    /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
-    pub const unsafe fn from_raw_mut_unchecked(ptr: *mut T) -> *mut Self {
-        ptr as *mut Self
-    }
-
-    /// Convert a reference to a `T` to a mutable reference to a `Align32<T>`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the reference is not aligned to 32 bytes.
-    pub fn from_raw_mut(input: &mut T) -> &mut Self {
-        let ptr = input as *mut T;
-        assert_eq!(
-            ptr.align_offset(32),
-            0,
-            "pointer is not aligned to 32 bytes"
-        );
-        unsafe { &mut *(ptr as *mut Self) }
-    }
-}
-
-#[repr(align(64))]
-/// Align the item to 64 bytes.
-pub struct Align64<T>(pub T);
-
-impl<T> Deref for Align32<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for Align32<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T> Deref for Align64<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for Align64<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
 
 impl Avx2F32Kernel {
     #[inline(always)]
@@ -860,6 +771,8 @@ impl Kernel for Avx512F32Kernel {
 
 #[cfg(test)]
 mod tests {
+    use crate::alignment::Align32;
+
     use super::*;
 
     #[test]

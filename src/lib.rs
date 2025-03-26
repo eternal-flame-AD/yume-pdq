@@ -29,16 +29,26 @@ use kernel::{
     type_traits::{DivisibleBy8, SquareOf},
 };
 
-use generic_array::{
-    ArrayLength,
-    typenum::{PartialDiv, U8, U16},
-};
+use generic_array::{ArrayLength, typenum::U16};
 
 /// PDQ compression kernel
 pub mod kernel;
 
+/// Memory alignment utilities.
+pub mod alignment;
+
+/// Testing utilities for debugging, integrating developers, or generally for fun poking into internals. Not part of the stable API.
+#[cfg(any(test, all(feature = "unstable", feature = "std")))]
+pub mod testing;
+
+#[cfg(feature = "lut-utils")]
+/// Some miscellaneous lookup tables that might be helpful for downstream applications.
+///
+/// I reserve the right to remove or break API of this module in the future.
+pub mod lut_utils;
+
 /// PDQ hash type
-pub type PDQHash<L = U16> = GenericArray<GenericArray<u8, <L as PartialDiv<U8>>::Output>, L>;
+pub type PDQHash<L = U16> = GenericArray<GenericArray<u8, <L as DivisibleBy8>::Output>, L>;
 
 /// Unquantized PDQ hash ("PDQF" in the original paper)
 pub type PDQHashF<N = f32, L = U16> = GenericArray<GenericArray<N, L>, L>;
@@ -137,12 +147,13 @@ pub fn hash_float<K: Kernel>(
 #[cfg(test)]
 mod tests {
 
+    use core::ops::Mul;
+
     use generic_array::{
         sequence::Flatten,
         typenum::{U2, U512},
     };
-    use num_traits::FromPrimitive;
-    use pdqhash::image::{self, DynamicImage, ImageBuffer, Luma};
+    use pdqhash::image::{self, DynamicImage};
 
     use crate::kernel::{
         DefaultKernel, ReferenceKernel, SquareGenericArrayExt,
@@ -181,21 +192,22 @@ mod tests {
 
             let input = input.resize_exact(512, 512, image::imageops::FilterType::Triangle);
 
-            let input_image = input.to_luma16();
+            let input_image = input.to_luma8();
 
-            let input_image_f = ImageBuffer::<Luma<f32>, _>::from_fn(512, 512, |i, j| {
-                Luma([input_image.get_pixel(i, j)[0] as f32])
-            });
+            let input_image_f = input_image
+                .as_raw()
+                .iter()
+                .map(|p| *p as f32)
+                .collect::<Vec<_>>();
 
             let output_expected =
-                pdqhash::generate_pdq_full_size(&DynamicImage::ImageLuma16(input_image));
+                pdqhash::generate_pdq_full_size(&DynamicImage::ImageLuma8(input_image));
 
             let mut output = GenericArray::default();
 
             let quality = hash(
                 kernel,
-                GenericArray::<_, _>::from_slice(input_image_f.as_raw().as_slice())
-                    .unflatten_square_ref(),
+                GenericArray::<_, _>::from_slice(input_image_f.as_slice()).unflatten_square_ref(),
                 &mut output,
                 &mut buf1,
                 &mut buf2,
@@ -223,7 +235,7 @@ mod tests {
 
     fn test_hash_impl_ref<
         ID: ArrayLength + SquareOf,
-        OD: ArrayLength + SquareOf,
+        OD: ArrayLength + SquareOf + Mul<OD>,
         K: Kernel<InputDimension = ID, OutputDimension = OD>,
     >(
         kernel: &mut K,
@@ -231,6 +243,7 @@ mod tests {
         OD: DivisibleBy8,
         <ID as SquareOf>::Output: ArrayLength,
         <OD as SquareOf>::Output: ArrayLength,
+        <OD as Mul<OD>>::Output: ArrayLength,
         ReferenceKernel<K::InternalFloat>:
             Kernel<InputDimension = ID, InternalFloat = K::InternalFloat, OutputDimension = OD>,
     {
@@ -253,9 +266,9 @@ mod tests {
             );
 
             let input_image = input
-                .to_luma16()
+                .to_luma8()
                 .iter()
-                .map(|p| FromPrimitive::from_u16(*p).unwrap())
+                .map(|p| *p as f32)
                 .collect::<Vec<_>>();
 
             let mut output = GenericArray::default();
@@ -301,9 +314,9 @@ mod tests {
         let input = image::load_from_memory(TEST_IMAGE_AAA_ORIG).unwrap();
         let input = input.resize_exact(512, 512, image::imageops::FilterType::Triangle);
         let input_image = input
-            .to_luma16()
+            .to_luma8()
             .iter()
-            .map(|p| FromPrimitive::from_u16(*p).unwrap())
+            .map(|p| *p as f32)
             .collect::<Vec<_>>();
         let mut output = GenericArray::default();
         let mut output_rethres = GenericArray::<GenericArray<u8, U2>, U16>::default();
@@ -328,7 +341,7 @@ mod tests {
     #[cfg(feature = "reference-rug")]
     fn test_hash_impl_ref_arb<
         ID: ArrayLength + SquareOf,
-        OD: ArrayLength + SquareOf + DivisibleBy8,
+        OD: ArrayLength + SquareOf + DivisibleBy8 + Mul<OD>,
         K: Kernel<InputDimension = ID, OutputDimension = OD>,
     >(
         kernel: &mut K,
@@ -338,6 +351,7 @@ mod tests {
                 InternalFloat = crate::kernel::float128::ArbFloat<96>,
                 OutputDimension = OD,
             >,
+        <OD as Mul<OD>>::Output: ArrayLength,
     {
         use generic_array::typenum::U127;
 
@@ -374,9 +388,9 @@ mod tests {
             let input = input.resize_exact(512, 512, image::imageops::FilterType::Triangle);
 
             let input_image = input
-                .to_luma16()
+                .to_luma8()
                 .iter()
-                .map(|p| FromPrimitive::from_u16(*p).unwrap())
+                .map(|p| *p as f32)
                 .collect::<Vec<_>>();
 
             let mut output = GenericArray::default();

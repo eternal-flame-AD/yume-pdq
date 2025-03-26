@@ -29,6 +29,7 @@ use std::{
 };
 
 use rug::Float as RFloat;
+use vergen::{BuildBuilder, CargoBuilder, Emitter};
 
 trait MiniFloat:
     Add<Output = Self>
@@ -154,6 +155,7 @@ fn generate_typename_for_typeint(x: u64) -> String {
 }
 
 fn generate_square_generic_array_impl<W: Write>(file: &mut W, x: u64) {
+    writeln!(file, "#[doc(hidden)]").unwrap();
     writeln!(
         file,
         "impl SquareOf for {} {{",
@@ -369,6 +371,38 @@ fn lerp(a: f64, b: f64, p: u32, n: u32) -> f64 {
 }
 
 fn main() {
+    let build = BuildBuilder::all_build().expect("Failed to build build information");
+    let cargo = CargoBuilder::all_cargo().expect("Failed to build cargo information");
+    Emitter::default()
+        .add_instructions(&build)
+        .expect("Failed to add build information")
+        .add_instructions(&cargo)
+        .expect("Failed to add cargo information")
+        .emit()
+        .expect("Failed to emit build information");
+
+    let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
+
+    let target_features = target_features.split(',').collect::<Vec<_>>();
+
+    let mut target_specific_cli_message = "This yume-pdq kernel has no vectorized superpowers.";
+
+    if target_features.contains(&"avx2") {
+        target_specific_cli_message = "This yume-pdq kernel has AVX2 yumemi power.";
+    }
+
+    #[cfg(feature = "avx512")]
+    {
+        if target_features.contains(&"avx512f") {
+            target_specific_cli_message = "This yume-pdq kernel has AVX-512 yumemi power.";
+        }
+    }
+
+    println!(
+        "cargo:rustc-env=TARGET_SPECIFIC_CLI_MESSAGE={}",
+        target_specific_cli_message
+    );
+
     let mut out_dct_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     out_dct_path.push("dct_matrix.rs");
     let mut out_tent_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -379,7 +413,22 @@ fn main() {
     dihedral_path.push("dihedral.rs");
     let mut square_generic_array_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     square_generic_array_path.push("square_generic_array.rs");
+    let mut lut_utils_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    lut_utils_path.push("lut_utils.rs");
 
+    let mut file = File::create(lut_utils_path).unwrap();
+    file.set_len(0).unwrap();
+    writeln!(
+        file,
+        "/// A lookup table for printing a binary value as a string of 8 bits"
+    )
+    .unwrap();
+    writeln!(file, "pub const BINARY_PRINTING: [[u8; 8]; 256] = [").unwrap();
+    for i in 0..=u8::MAX {
+        writeln!(file, "*b\"{:08b}\",", i).unwrap();
+    }
+    writeln!(file, "];").unwrap();
+    file.flush().unwrap();
     let mut file = File::create(square_generic_array_path).unwrap();
     file.set_len(0).unwrap();
     for i in 1..=2048 {

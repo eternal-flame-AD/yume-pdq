@@ -7,16 +7,25 @@ description = "An optimized implementation of the PDQ hash function for high-thr
 license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/yume-pdq"
 build = "build.rs"
+exclude= [
+    "test-data/*",
+    ".vscode/*",
+    "bench-plot/*",
+]
 
 [dependencies]
 generic-array = "1.2.0"
 num-traits = { version = "0.2", default-features = false }
 rug = { version = "1.27", optional = true }
 derive_more = { version = "2", features = ["add", "add_assign", "mul", "mul_assign", "not"], optional = true }
+clap = { version = "4.5.32", features = ["derive"], optional = true }
+arc-swap = { version = "1.7", optional = true }
+rand = { version = "0.9", optional = true, default-features = false, features = ["small_rng"] }
 
 [build-dependencies]
 derive_more = { version = "2", features = ["add", "add_assign", "mul_assign"] }
 rug = "1.27"
+vergen = { version = "9", features = ["build", "cargo"] }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -38,3 +47,10 @@ std = []
 avx512 = []
 reference-rug = ["std", "dep:rug", "dep:derive_more"]
 unstable = []
+lut-utils = []
+cli = ["std", "dep:clap", "dep:arc-swap", "dep:rand", "lut-utils"]
+
+[[bin]]
+name = "yume-pdq"
+path = "src/main.rs"
+required-features = ["cli"]

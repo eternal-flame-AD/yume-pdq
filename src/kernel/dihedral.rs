@@ -163,24 +163,3 @@ where
 
     do_loop!([0, 1, 2, 3] * 8);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash_diagflip() {
-        let mut hash = PDQHashF::<f32>::default();
-        for i in 0..16 {
-            for j in 0..16 {
-                hash[i][j] = i as f32 * 16.0 + j as f32;
-            }
-        }
-        diagflip(&mut hash);
-        for i in 0..16 {
-            for j in 0..16 {
-                assert_eq!(hash[i][j], j as f32 * 16.0 + i as f32);
-            }
-        }
-    }
-}

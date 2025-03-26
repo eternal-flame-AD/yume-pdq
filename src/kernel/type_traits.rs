@@ -1,4 +1,4 @@
-use core::marker::PhantomData;
+use core::{marker::PhantomData, ops::Mul};
 
 use generic_array::{
     ArrayLength,
@@ -13,7 +13,7 @@ impl<U, B: Bit> sealing::Sealed for UInt<U, B> {}
 
 /// A type-level LUT for squaring a number.
 ///
-/// Currently it is defined for up to 1024x1024.
+/// Currently it is defined for up to 1024x1024 (the implementors are hidden from rustdoc).
 pub trait SquareOf: ArrayLength + sealing::Sealed {
     /// The Squared result type.
     type Output: ArrayLength;
@@ -22,12 +22,19 @@ pub trait SquareOf: ArrayLength + sealing::Sealed {
 include!(concat!(env!("OUT_DIR"), "/square_generic_array.rs"));
 
 /// Whether a number is divisible by 8.
-pub trait DivisibleBy8: ArrayLength + sealing::Sealed {
+pub trait DivisibleBy8: ArrayLength + sealing::Sealed
+where
+    <Self::Output as Mul<Self>>::Output: ArrayLength,
+{
     /// The result after dividing by 8.
-    type Output: ArrayLength;
+    type Output: ArrayLength + Mul<Self>;
 }
 
-impl<U: ArrayLength> DivisibleBy8 for UInt<UInt<UInt<U, B0>, B0>, B0> {
+impl<U: ArrayLength> DivisibleBy8 for UInt<UInt<UInt<U, B0>, B0>, B0>
+where
+    U: Mul<UInt<UInt<UInt<U, B0>, B0>, B0>>,
+    <U as Mul<UInt<UInt<UInt<U, B0>, B0>, B0>>>::Output: ArrayLength,
+{
     type Output = U;
 }
 

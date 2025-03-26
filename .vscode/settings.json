@@ -3,6 +3,7 @@
         "avx512",
         "std",
         "reference-rug",
+        "cli",
     ],
     "psi-header.config": {
         "license": "Custom"
