@@ -233,8 +233,14 @@ impl Kernel for Avx2F32Kernel {
         Some(&["avx2", "fma"])
     }
 
+    #[cfg(all(target_feature = "avx2", target_feature = "fma"))]
     fn required_hardware_features_met() -> bool {
         is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
+    }
+
+    #[cfg(not(all(target_feature = "avx2", target_feature = "fma")))]
+    fn required_hardware_features_met() -> bool {
+        false
     }
 
     fn sum_of_gradients(
@@ -475,8 +481,14 @@ impl Kernel for Avx512F32Kernel {
         Some(&["avx512f"])
     }
 
+    #[cfg(all(target_feature = "avx512f"))]
     fn required_hardware_features_met() -> bool {
         is_x86_feature_detected!("avx512f")
+    }
+
+    #[cfg(not(all(target_feature = "avx512f")))]
+    fn required_hardware_features_met() -> bool {
+        false
     }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {

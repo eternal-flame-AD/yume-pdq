@@ -569,17 +569,21 @@ fn open_writer(spec: &str, buffer: Option<u32>) -> Result<Box<dyn Write + Send +
 
 fn check_hardware_features<K: Kernel>(_kernel: &K) {
     if !K::required_hardware_features_met() {
-        panic!("One or more required hardware features ({:?}) are not available on this CPU, please recompile with a kernel suitable for your CPU or use the --force-scalar flag to force an auto-vectorized kernel", K::required_hardware_features());
+        panic!("One or more required hardware features ({:?}) are not available on this CPU or target CPU when compiling, please recompile with a kernel suitable for your CPU or use the --force-scalar flag to force an auto-vectorized kernel", K::required_hardware_features());
     }
 }
 
 fn main() {
     let args = Args::parse();
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", all(target_feature = "avx2", target_feature = "fma")))]
     let has_avx2_runtime = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(all(target_feature = "avx2", target_feature = "fma"))))]
+    let has_avx2_runtime = false;
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     let has_avx512f_runtime = is_x86_feature_detected!("avx512f");
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512f")))]
+    let has_avx512f_runtime = false;
 
 
     match args.subcommand {
