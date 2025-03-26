@@ -229,6 +229,14 @@ impl Kernel for Avx2F32Kernel {
         scaled.min(1.0)
     }
 
+    fn required_hardware_features() -> Option<&'static [&'static str]> {
+        Some(&["avx2", "fma"])
+    }
+
+    fn required_hardware_features_met() -> bool {
+        is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
+    }
+
     fn sum_of_gradients(
         &mut self,
         input: &GenericArray<GenericArray<Self::InternalFloat, U16>, U16>,
@@ -462,6 +470,14 @@ impl Kernel for Avx512F32Kernel {
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
+
+    fn required_hardware_features() -> Option<&'static [&'static str]> {
+        Some(&["avx512f"])
+    }
+
+    fn required_hardware_features_met() -> bool {
+        is_x86_feature_detected!("avx512f")
+    }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);

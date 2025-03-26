@@ -184,6 +184,18 @@ where
         + Send
         + Sync;
 
+    /// Returns the hardware features required to use this kernel
+    fn required_hardware_features() -> Option<&'static [&'static str]> {
+        None
+    }
+
+    /// Returns true if the required hardware features are met at runtime.
+    ///
+    /// Usually downstream applications should be generic over this trait and finally a runtime check is done to dispatch application logic with the suitable kernel.
+    fn required_hardware_features_met() -> bool {
+        true
+    }
+
     /// Apply a tent-filter average to every 8x8 sub-block of the input buffer and write the result of each sub-block to the output buffer.
     fn jarosz_compress(
         &mut self,

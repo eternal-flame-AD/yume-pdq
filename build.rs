@@ -387,7 +387,7 @@ fn main() {
 
     let mut target_specific_cli_message = "This yume-pdq kernel has no vectorized superpowers.";
 
-    if target_features.contains(&"avx2") {
+    if target_features.contains(&"avx2") && target_features.contains(&"fma") {
         target_specific_cli_message = "This yume-pdq kernel has AVX2 yumemi power.";
     }
 

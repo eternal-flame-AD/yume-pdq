@@ -16,6 +16,34 @@ No-std support.
 
 ## Binary usage
 
+Prerequisites:
+- Rust toolchain (2024 edition or newer (1.85.0 or newer))
+- A CPU that is supported by the Rust toolchain (of course)
+- To use f32x8 SIMD kernel, you need an x86_64 CPU with AVX2 and FMA support
+- To use f32x16 SIMD kernel, you need an x86_64 CPU with AVX512F support (usually every single AVX512 CPU supports this)
+
+Compilation for your own CPU (AVX2 if available, falls back to an auto-vectorized scalar kernel) is done usually with:
+
+```
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features "cli"
+```
+
+If you want a generic binary that only assumes AVX2 and FMA is available to use the optimized kernel, you can build with:
+
+```
+RUSTFLAGS="-Ctarget-feature=+avx2,+fma" cargo build --release --features "cli"
+```
+
+If your CPU has AVX512, you can also try (with a Rust nightly compiler):
+
+```
+RUSTFLAGS="-Ctarget-cpu=native" cargo +nightly build --release --features "cli avx512"
+RUSTFLAGS="-Ctarget-feature=+avx512f" cargo +nightly build --release --features "cli avx512"
+```
+
+and see if it is faster, it may not be, especially with older generations of AVX512 CPUs, and it makes the final binary highly specific to your CPU (even other AVX512 CPUs may get #UD on your `-Ctarget-cpu=native` binary).
+
+
 See [binary_usage.md](binary_usage.md) or the CLI help menu for details and practical examples.
 
 ## Benchmark

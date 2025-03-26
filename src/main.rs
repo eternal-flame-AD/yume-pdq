@@ -120,6 +120,14 @@ enum SubCmd {
         long_about = "Displays diagnostic information about the vectorization capabilities of the current CPU. HIGHLY RECOMMENDED to run this command before deploying on a new micro-architecture."
     )]
     VectorizationInfo,
+
+    #[command(
+        name = "list-cores",
+        about = "List cores IDs",
+        long_about = "Lists the core IDs of the current CPU."
+    )]
+    #[cfg(feature = "hpc")]
+    ListCores,
 }
 
 #[derive(Parser)]
@@ -158,6 +166,31 @@ struct PipeArgs {
                      Useful for testing or when encountering issues with vectorized code."
     )]
     force_scalar: bool,
+
+    #[arg(
+        long,
+        help = "Pin processing for worker 0 to this core (list by 'yume-pdq list-cores')",
+        long_help = concat!(
+            "Pin processing for worker 0 to this core. This is usually not needed for most practical workloads that involve an upstream source of data (e.g. a video stream).",
+            "\n",
+            "However when absolute maximum performance is required, this can be used to increase cache coherency and reduce unnecessary rescheduling off-core.",
+            "\n",
+            "You may find the `lstopo` utility from the `hwloc` package useful to find the best core ID for your system. Generally speaking, you should choose two cores that don't share the same FPU but are on the same socket and CCX die.",
+            "\n",
+            "This is an advanced feature for users with some understanding of their system's topology. \
+             Try different values together with --core1, some bad combinations may be worse than no pinning at all."
+        )
+    )]
+    #[cfg(feature = "hpc")]
+    core0: Option<usize>,
+
+    #[arg(
+        long,
+        help = "Pin processing for worker 1 to this core (list by 'yume-pdq list-cores')",
+        long_help = "See --core0 for more details."
+    )]
+    #[cfg(feature = "hpc")]
+    core1: Option<usize>,
 
     #[arg(
         long,
@@ -295,7 +328,17 @@ where
     pub unsafe fn loop_thread<const I_AM_READING_INITIALLY: bool, const STATS: bool>(
         &self,
         mut kernel: K,
+       #[cfg(feature = "hpc")] pin_core: Option<usize>,
     ) -> Result<(), std::io::Error> {
+
+        #[cfg(feature = "hpc")]
+        if let Some(core_id) = pin_core {
+           if !core_affinity::set_for_current(core_affinity::CoreId { id: core_id }) {
+            eprintln!("Failed to pin processing to core {}, continuing without pinning", core_id);
+           }
+        }
+
+
         let mut have_data = false;
         let mut i_am_reading = I_AM_READING_INITIALLY;
         let mut frames_processed = 0;
@@ -524,15 +567,32 @@ fn open_writer(spec: &str, buffer: Option<u32>) -> Result<Box<dyn Write + Send +
     }
 }
 
+fn check_hardware_features<K: Kernel>(_kernel: &K) {
+    if !K::required_hardware_features_met() {
+        panic!("One or more required hardware features ({:?}) are not available on this CPU, please recompile with a kernel suitable for your CPU or use the --force-scalar flag to force an auto-vectorized kernel", K::required_hardware_features());
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
     #[cfg(target_arch = "x86_64")]
-    let has_avx2_runtime = is_x86_feature_detected!("avx2");
+    let has_avx2_runtime = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
     #[cfg(target_arch = "x86_64")]
     let has_avx512f_runtime = is_x86_feature_detected!("avx512f");
 
+
     match args.subcommand {
+        #[cfg(feature = "hpc")]
+        SubCmd::ListCores => {
+            if let Some(core_ids) = core_affinity::get_core_ids() {
+                for core_id in core_ids {
+                    println!("{}", core_id.id);
+                }
+            } else {
+                eprintln!("Failed to get core IDs");
+            }
+        }
         #[cfg(target_arch = "x86_64")]
         SubCmd::VectorizationInfo => {
 
@@ -540,12 +600,17 @@ fn main() {
             println!();
             println!("On your processor, this build can use the following features:");
 
-            #[cfg(target_feature = "avx2")]
-            println!("AVX2: {}", if has_avx2_runtime { if cfg!(feature = "avx512") { "Detected but this build uses AVX512 kernels" } else { "Yes" } } else { "No" });
+            #[cfg(all(target_feature = "avx2", target_feature = "fma"))]
+            println!("AVX2: {}", 
+                if has_avx2_runtime { 
+                    if cfg!(feature = "avx512") { "Detected but this build uses AVX512 kernels" } else { "Yes" } }
+                    else if !is_x86_feature_detected!("avx2") { "No, AVX2 not detected at runtime" }
+                    else if !is_x86_feature_detected!("fma") { "No, FMA not detected at runtime" }
+                    else { "No" });
 
-            #[cfg(not(target_feature = "avx2"))]
+            #[cfg(not(all(target_feature = "avx2", target_feature = "fma")))]
             if has_avx2_runtime {
-                println!("AVX2: SSE only, did you set RUSTFLAGS=-Ctarget-feature=+avx2 or -Ctarget-cpu=native ?");
+                println!("AVX2: SSE only, did you set RUSTFLAGS=-Ctarget-feature=+avx2,+fma or -Ctarget-cpu=native ?");
             }
 
             #[cfg(feature = "avx512")]
@@ -574,14 +639,7 @@ fn main() {
             }
         }
         
-        SubCmd::Pipe(mut args) => {
-
-            #[cfg(target_arch = "x86_64")]
-            if !args.force_scalar && !has_avx2_runtime {
-                eprintln!("Warning: AVX2 is not available on this CPU, using scalar code.");
-                args.force_scalar = true;
-            }
-
+        SubCmd::Pipe(args) => {
             #[cfg(target_arch = "x86_64")]
             let (kernel0, kernel1) = {
                 #[cfg(all(feature = "avx512", target_feature = "avx512f"))]
@@ -589,13 +647,13 @@ fn main() {
                     (kernel::x86::Avx512F32Kernel, kernel::x86::Avx512F32Kernel)
                 }
                 #[cfg(all(
-                    target_feature = "avx2",
+                    all(target_feature = "avx2", target_feature = "fma"),
                     not(all(feature = "avx512", target_feature = "avx512f"))
                 ))]
                 {
                     (kernel::x86::Avx2F32Kernel, kernel::x86::Avx2F32Kernel)
                 }
-                #[cfg(not(target_feature = "avx2"))]
+                #[cfg(not(all(target_feature = "avx2", target_feature = "fma")))]
                 {
                     (kernel::DefaultKernel, kernel::DefaultKernel)
                 }
@@ -603,6 +661,9 @@ fn main() {
 
             #[cfg(not(target_arch = "x86_64"))]
             let (kernel0, kernel1) = (kernel::DefaultKernel(), kernel::DefaultKernel());
+
+            check_hardware_features(&kernel0);
+            check_hardware_features(&kernel1);
 
             let reader = open_reader(&args.input).unwrap();
             let writer = open_writer(&args.output, args.output_buffer).unwrap();
@@ -616,16 +677,16 @@ fn main() {
                                 thread::scope(|s| {
                                     let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
                                         if args.stats {
-                                            unsafe { processor.loop_thread::<true, true>(kernel::DefaultKernel) }
+                                            unsafe { processor.loop_thread::<true, true>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core0) }
                                         } else {
-                                            unsafe { processor.loop_thread::<true, false>(kernel::DefaultKernel) }
+                                            unsafe { processor.loop_thread::<true, false>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core0) }
                                         }
                                     }).expect("Failed to spawn worker thread 0");
                                     let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
                                         if args.stats {
-                                            unsafe { processor.loop_thread::<false, true>(kernel::DefaultKernel) }
+                                            unsafe { processor.loop_thread::<false, true>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core1) }
                                         } else {
-                                            unsafe { processor.loop_thread::<false, false>(kernel::DefaultKernel) }
+                                            unsafe { processor.loop_thread::<false, false>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core1) }
                                         }
                                     }).expect("Failed to spawn worker thread 1");
 
@@ -672,16 +733,16 @@ fn main() {
                                 thread::scope(|s| {
                                     let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
                                         if args.stats {
-                                            unsafe { processor.loop_thread::<true, true>(kernel0) }
+                                            unsafe { processor.loop_thread::<true, true>(kernel0, #[cfg(feature = "hpc")] args.core0) }
                                         } else {
-                                            unsafe { processor.loop_thread::<true, false>(kernel0) }
+                                            unsafe { processor.loop_thread::<true, false>(kernel0, #[cfg(feature = "hpc")] args.core0) }
                                         }
                                     }).expect("Failed to spawn worker thread 0");
                                     let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
                                         if args.stats {
-                                            unsafe { processor.loop_thread::<false, true>(kernel1) }
-                                        } else {
-                                            unsafe { processor.loop_thread::<false, false>(kernel1) }
+                                            unsafe { processor.loop_thread::<false, true>(kernel1, #[cfg(feature = "hpc")] args.core1) }
+                                        } else {    
+                                            unsafe { processor.loop_thread::<false, false>(kernel1, #[cfg(feature = "hpc")] args.core1) }
                                         }
                                     }).expect("Failed to spawn worker thread 1");
 

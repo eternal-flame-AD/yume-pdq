@@ -98,3 +98,26 @@ Options:
           
           [default: bin]
 ```
+
+## Hardware Topology based optimizations
+
+The `pipe` command uses a ping-pong buffer design with 2 threads to maximize throughput. While one thread reads the next frame from IO, the other thread processes the current frame, then they swap roles. This design:
+
+1. Decouples IO latency from PDQ hash computation
+2. Allows each thread to keep its working data in L2/L3 caches
+3. Minimizes cache thrashing between threads
+
+This introduces potential for further optimizations by explicitly telling the OS each thread should stay on the same cache line as much as possible. with no false sharing.
+
+This is usually not needed as OS handles it reasonably well for most practical use case throughput when there is an upstream bottleneck. If you can do better and need either a more stable throughput or need to squeeze out the last 5% possible speed (warning: you can easily make it worse), compile with `--features hpc` and use the following commands to pin the ping-pong buffer threads to specific cores.
+
+```
+> cargo run --release --features "cli hpc" -- list-cores
+0
+1
+...
+
+> cargo run --release --features "cli hpc" -- pipe --core0 0 --core1 1
+```
+
+You may find the `lstopo` tool from `hwloc` package useful to understand your system's topology and why one combination may be better or worse than not pinning at all.
