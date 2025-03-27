@@ -97,7 +97,7 @@ plot.iteration <- \(img.array, title = NULL, marginxy = 0.2) {
 }
 
 compression.input <- plot.iteration(prepare.image("compress/avx2/input.ppm"), title = "Input Image (512x512 Luma)")
-compression.output <- plot.iteration(prepare.image("compress/avx2/output.ppm"), title = "Tent Filter Compression Using Vectorized FMA Lookup Tables (128x128 Luma)")
+compression.output <- plot.iteration(prepare.image("compress/avx2/output.ppm"), title = "Tent Filter Compression Using Vectorized FMA Lookup Tables (127x127 Luma, padded to 128x128)")
 
 # Create input and output plots
 quantize.input <- plot.iteration(prepare.image("quantize/avx2/input.ppm"), title = expression(Hand-vectorized ~ DCTII ~ (D %*% A %*% D^t)))
