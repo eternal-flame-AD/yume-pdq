@@ -12,10 +12,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install ImageMagick
+    - name: Install ImageMagick and QEMU
       run: |
         sudo apt-get update
-        sudo apt-get install -y imagemagick
+        sudo apt-get install -y imagemagick qemu-user
 
     - name: Install Python dependencies
       run: |
@@ -30,7 +30,20 @@ jobs:
 
     - name: Build GNU targets
       run: |
-        export CARGO_BUILD_RUSTFLAGS="-Ctarget-cpu=native"
+        # Create a wrapper script for the build
+        cat > avx512-wrapper.sh << 'EOF'
+        #!/bin/bash
+    
+        # Check for AVX-512 support
+        if cpuid | grep -q "AVX512F"; then
+          # AVX-512 is available, run normally
+          exec "$@"
+        else
+          echo "AVX-512 is not available, using QEMU, build may be very slow" >&2
+          exec qemu-x86_64 -cpu max "$@"
+        fi
+        EOF
+        chmod +x avx512-wrapper.sh
 
         # Scalar
         cargo build --release --lib --features "ffi"
@@ -56,23 +69,28 @@ jobs:
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_cfi.so
         cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_cfi.a
+
         # AVX2 CFI Binary
         RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-gnu-cfi
 
-        # AVX512
-        RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f" cargo +nightly build --release --lib --features "ffi avx512"
-        cp target/release/libyume_pdq.so ci-release/libyume_pdq_avx512.so
-        cp target/release/libyume_pdq.a ci-release/libyume_pdq_avx512.a
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$(pwd)/avx512-wrapper.sh"
 
-        # AVX512 CFI
-        RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi avx512"
-        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_avx512_cfi.so
-        cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_avx512_cfi.a
+          # AVX512
+          RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f" cargo +nightly build --release --lib --features "ffi avx512"
+          cp target/release/libyume_pdq.so ci-release/libyume_pdq_avx512.so
+          cp target/release/libyume_pdq.a ci-release/libyume_pdq_avx512.a
 
-        # AVX512 CFI Binary
-        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "avx512 cli"
-        cp target/release-no-lto/yume-pdq ci-release/yume-pdq-avx512-gnu-cfi
+          # AVX512 CFI
+          RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi avx512"
+          cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_avx512_cfi.so
+          cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_avx512_cfi.a
+
+          # AVX512 CFI Binary
+          RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "avx512 cli"
+          cp target/release-no-lto/yume-pdq ci-release/yume-pdq-avx512-gnu-cfi
+
+        unset CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER
 
     - name: Run Shared Library test
       run: |
@@ -81,7 +99,7 @@ jobs:
         for lib in ci-release/*.so; do
           accepted=0
           for whitelist in test-data/aaa-orig.jpg.expect; do
-            if DYLIB_LOCATION=$lib python hash.py $whitelist | grep $whitelist; then
+            if DYLIB_LOCATION=$lib avx512-wrapper.sh python hash.py $whitelist | grep $whitelist; then
               echo "Successfully matched hash $whitelist with $lib"
               accepted=1
               break
@@ -105,7 +123,7 @@ jobs:
     - name: Build musl target binary
       run: |
         export CARGO_BUILD_RUSTFLAGS="-Ctarget-cpu=native"
-        
+
         # Scalar
         cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-scalar
@@ -114,9 +132,13 @@ jobs:
         RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq
 
-        # AVX512
-        RUSTFLAGS="-C target-feature=+avx2,+fma,+avx512f" cargo build --release --bin yume-pdq --features "cli avx512" --target x86_64-unknown-linux-musl
-        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-avx512
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$(pwd)/avx512-wrapper.sh"
+
+          # AVX512
+          RUSTFLAGS="-C target-feature=+avx2,+fma,+avx512f" cargo build --release --bin yume-pdq --features "cli avx512" --target x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-avx512
+
+        unset CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER
 
     - name: Test all target binaries
       run: |
@@ -124,7 +146,7 @@ jobs:
           echo "Testing $bin"
           rm -f output.tmp          
           convert 'test-data/aaa-orig.jpg' -resize 512x512! -colorspace gray -depth 8 gray:- | \
-            $bin pipe -f q+hex+lf | tee output.tmp
+            avx512-wrapper.sh "$bin" pipe -f q+hex+lf | tee output.tmp
           matched=0
           for whitelist in test-data/aaa-orig.jpg.expect; do
             if diff output.tmp $whitelist; then
