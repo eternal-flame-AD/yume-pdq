@@ -304,7 +304,7 @@ fn bench_hash(c: &mut Criterion) {
             input.push(rng.random_range(0.0..1.0));
         }
         #[cfg(not(feature = "avx512"))]
-        let mut kernel = KernelRouter::new(Avx2F32Kernel, DefaultKernel::default());
+        let mut kernel = KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default());
         #[cfg(feature = "avx512")]
         let mut kernel = KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
             .layer_on_top(x86::Avx512F32Kernel);
