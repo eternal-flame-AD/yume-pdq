@@ -21,7 +21,6 @@
 
 use core::{
     fmt::{Debug, Display},
-    hint::unreachable_unchecked,
     marker::PhantomData,
     ops::Mul,
 };
@@ -496,17 +495,6 @@ where
         if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if self.preferred.jarosz_compress_opt::<false>(buffer, output) {
                 return;
-            } else {
-                #[cfg(debug_assertions)]
-                panic!(
-                    "kernel reported that it would run at initialization but changed its mind after execution ({})",
-                    core::any::type_name::<Self>()
-                );
-
-                #[allow(unreachable_code)]
-                unsafe {
-                    unreachable_unchecked();
-                }
             }
         }
 
@@ -531,14 +519,6 @@ where
                 .quantize_opt::<false>(_input, _threshold, _output)
             {
                 return;
-            } else {
-                #[cfg(debug_assertions)]
-                panic!("kernel reported that it would run but changed its mind after execution");
-
-                #[allow(unreachable_code)]
-                unsafe {
-                    unreachable_unchecked();
-                }
             }
         }
 
@@ -556,14 +536,6 @@ where
         if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if let Some(sum) = self.preferred.sum_of_gradients_opt::<false>(input) {
                 return sum;
-            } else {
-                #[cfg(debug_assertions)]
-                panic!("kernel reported that it would run but changed its mind after execution");
-
-                #[allow(unreachable_code)]
-                unsafe {
-                    unreachable_unchecked();
-                }
             }
         }
 

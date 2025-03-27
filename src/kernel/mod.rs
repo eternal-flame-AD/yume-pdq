@@ -84,6 +84,8 @@ pub(crate) type SmartKernelConcreteType = router::KernelRouter<
 >;
 
 /// Return an opaque kernel object that is likely what you want. (based on your feature flags)
+///
+/// Generally we will make every effort to make new kernels available through this function so you don't need to care about the underlying implementation.
 #[inline(always)]
 pub fn smart_kernel() -> impl Kernel<
     RequiredHardwareFeature = impl EvaluateHardwareFeature<EnabledStatic = B1>,
@@ -416,6 +418,7 @@ where
         let median = torben_median(input);
         *threshold = median;
         let output = output.flatten();
+        output.fill(0);
         for (i, j) in input.iter().flatten().enumerate() {
             output[32 - 1 - i / 8] += if *j > median { 1 << (i % 8) } else { 0 };
         }

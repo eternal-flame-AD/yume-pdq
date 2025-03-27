@@ -2,6 +2,23 @@
 
 A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm that prioritizes throughput over precision.
 
+## Table of Contents
+
+- [yume-pdq](#yume-pdq)
+  - [Table of Contents](#table-of-contents)
+  - [Pipeline Overview](#pipeline-overview)
+  - [Design Goals](#design-goals)
+  - [Binary usage](#binary-usage)
+  - [Python usage](#python-usage)
+  - [Benchmark](#benchmark)
+    - [Formal](#formal)
+    - [Empirical / End-to-end](#empirical--end-to-end)
+      - [Video Processing](#video-processing)
+      - [Image Processing](#image-processing)
+  - [Accuracy on test set](#accuracy-on-test-set)
+  - [Example code](#example-code)
+  - [License and attributions](#license-and-attributions)
+
 ## Pipeline Overview
 
 ![Pipeline Overview](pipeline_overview.png)
@@ -54,8 +71,10 @@ See [binary_usage.md](binary_usage.md) or the CLI help menu for details and prac
 
 See [integration/python.py](integration/python.py) for an example of how to use this library from Python.
 
+You can download a pre-built shared object from Github Actions artifacts but I recommend building it for your specific machine for best assurance that it would work and performance.
+
 ```py
-python integration/hash.py test-data/aaa-orig.jpg                                                                               09:42:59
+python integration/hash.py test-data/aaa-orig.jpg
 Image: test-data/aaa-orig.jpg
 Quality: 1.000
 Threshold: 12.554
@@ -142,14 +161,139 @@ Note higher distance to the `pdqhash` library is expected as they have mandatory
 |                                                       | Default | 26/256 (10.2%)          | 10/256 (3.9%)     | 10/256 (3.9%)     |
 |                                                       | Ref32   | -                       | -                 | 0/256 (0.0%)      |
 
+## Example code
 
-## How?
+The Rust API is fully generic over almost all possible parameters, so you don't need to remember constants or write these magic numbers in your code, you can just use type inference provided by generic_array and typenum crates.
 
-This is a TODO as my blog post, but generally the gist is:
+```rust
+use generic_array::sequence::{Flatten, GenericSequence};
+use core::f32::consts::PI; // no-std compatible (except the printing part)
+use yume_pdq::{GenericArray, smart_kernel};
 
-- Adjust the intermediate matrix size to make convolution fit perfectly on pixel centers.
-- Precompute LUT for everything.
-- Hand-optimized compute kernels to specific lane widths with optimal memory access pattern and register pressure.
+fn main() {
+    // Fill with horizontal FM pattern - expect a strong horizontal frequency component in the DCT response
+    // this demonstrates the "thing" DCT does: "it 'unwraps' one level of frequency domain information into spatial domain"
+    // if we just do a sine wave without modulation, it will end up as a constant matrix and quality will be 0.
+    let mut frequency = 4.0; // create 4 waves of stripes
+    let modulation = frequency / 512.0; // make it exactly a whole number w.r.t. the matrix width so it shows up as nice vertical stripes.
+    let input: GenericArray<GenericArray<f32, _>, _> = GenericArray::generate(|_| {
+        GenericArray::generate(|j| {
+            frequency += modulation;
+            let value = ((j as f32 * 2.0 * PI * frequency) / 512.0).sin();
+            // Scale to 0-255 range and center around 128
+            (value * 127.0) + 128.0
+        })
+    });
+
+    // Get the optimal kernel for your CPU and compile time flags
+    let mut kernel = smart_kernel();
+
+    // Allocate output and temporary buffers
+    let mut output = GenericArray::default(); // Will contain the final 256-bit hash
+    let mut buf1 = GenericArray::default(); // Temporary buffer
+    let mut row_tmp = GenericArray::default(); // Temporary buffer
+    let mut pdqf = GenericArray::default(); // Temporary buffer (PDQF unquantized hash)
+
+    let mut threshold = 0.0; // value used for thresholding the hash, useful for doing different hashes with dihedral transformations
+    // Compute the hash
+    let quality = yume_pdq::hash_get_threshold(
+        &mut kernel,
+        &input,
+        &mut threshold,
+        &mut output,
+        &mut buf1,
+        &mut row_tmp,
+        &mut pdqf,
+    );
+
+    // this does the same thing but not require you to ask for a threshold
+    let quality_easy = yume_pdq::hash(
+        &mut kernel,
+        &input,
+        &mut output,
+        &mut buf1,
+        &mut row_tmp,
+        &mut pdqf,
+    );
+
+    assert_eq!(quality, quality_easy);
+
+    println!(
+        "Image quality score: {} (threshold at {})",
+        quality, threshold
+    );
+
+    // The sine wave should create a strong response in the DCT coefficients
+    // Print the unquantized hash (pdqf) to see where the energy concentrates
+    println!("\nUnquantized hash (PDQF) - should show horizontal frequency component of 4 (vertical stripes):");
+
+    for row in pdqf.iter() {
+        for &val in row.iter() {
+            print!("{:5.1} ", val);
+        }
+        println!();
+    }
+
+    /*
+    You should see:
+     18.5  0.1  12.2  12.9  4.9  0.4  22.4 -14.0   9.9 -0.5   18.2   18.0  0.7   5.8   19.4  -14.0
+    -14.3  0.4  -7.6  13.2  0.8  0.4 -18.7 -13.8  -4.2  0.0  -13.6   18.3  7.1   5.5  -15.0  -14.1
+     18.8  0.0  12.3  13.2  4.9  0.3  22.8 -14.3  10.0 -0.5   18.4   18.5  0.6   5.9   19.6  -14.4
+    -14.3  0.4  -7.6  13.7  0.8  0.3 -18.7 -14.5  -4.2 -0.0  -13.7   19.1  7.1   5.7  -15.0  -14.8
+     19.5 -0.0  12.5  14.1  4.7  0.3  23.6 -15.5  10.2 -0.6   18.9   19.8  0.6   6.2   20.0  -15.6
+    -14.4  0.3  -7.6  15.4  0.8  0.2 -18.8 -16.6  -4.2 -0.2  -13.7   21.5  7.1   6.3  -15.1  -17.0
+     22.2 -0.3  12.3  18.4  2.8  0.1  26.6 -21.0  10.5 -1.2   20.2   26.0 -0.4   7.8   20.4  -21.3
+    -13.9  7.0  -7.8 -77.2  0.3  6.2 -18.5 101.0  -4.6 11.3  -14.1 -110.7  7.0 -26.7  -15.1  106.1
+     17.8  0.5  15.2   7.7  9.5  0.7  21.8  -7.2  11.8  0.2   19.6   10.6  2.9   3.9   22.6   -7.0
+    -14.6  0.7  -7.8  10.9  0.7  0.6 -19.1 -10.7  -4.4  0.4  -14.0   15.0  7.1   4.7  -15.4  -10.8
+     21.4  0.2  16.0  12.0  8.4  0.5  25.9 -12.7  12.8 -0.3   22.1   16.8  2.4   5.6   24.4  -12.6
+    -14.9  0.5  -8.0  13.5  0.7  0.5 -19.4 -13.9  -4.5  0.2  -14.3   18.7  7.1   5.6  -15.7  -14.2
+     25.7  0.1  18.9  14.7  9.8  0.4  31.0 -16.0  15.3 -0.6   26.3   20.6  3.2   6.6   28.7  -16.0
+    -15.3  0.3  -8.3  17.5  0.5  0.3 -20.0 -18.7  -4.7 -0.2  -14.7   24.3  7.1   7.1  -16.2  -19.1
+     44.6 -0.5  32.9  24.4 17.8  0.0  53.3 -27.8  27.4 -1.8   45.3   34.1  7.6  10.3   49.3  -28.0
+     -8.7  5.3  -3.5 -76.0  3.0  4.6 -12.3  95.5  -1.1  9.4   -8.6 -106.7  8.3 -26.8   -8.8   98.2
+        */
+
+    // Print the final binary hash
+    println!("\nQuantized hash (binary):");
+    for row in output.iter() {
+        for &val in row.iter() {
+            print!("{:08b} ", val);
+        }
+    }
+    println!();
+
+    println!("\nQuantized hash (hex):");
+    for row in output.iter() {
+        for &val in row.iter() {
+            print!("{:02x} ", val);
+        }
+    }
+    println!();
+
+    let expected = [
+        0x92, 0xb2, 0x7d, 0x5d, 0x38, 0x08, 0x7d, 0x5d, 0x38, 0x08, 0x7d, 0x5d, 0x38, 0x1a, 0x7d,
+        0x7d, 0x92, 0xa2, 0x6d, 0x5d, 0x38, 0x18, 0x6d, 0x5d, 0x38, 0x18, 0x6d, 0x5d, 0x38, 0x18,
+        0x7d, 0x5d,
+    ];
+
+    let bits_different = output
+        .flatten()
+        .as_slice()
+        .iter()
+        .zip(expected.iter())
+        .map(|(a, b)| a ^ b)
+        .map(u8::count_ones)
+        .sum::<u32>();
+
+    assert!(
+        bits_different <= 2,
+        "Hash does not match expected value ({} bits different)",
+        bits_different
+    );
+}
+```
+
 
 ## License and attributions
 
