@@ -72,9 +72,14 @@ jobs:
               continue
             fi
             if python integration/hash.py test-data/aaa-orig.jpg | grep "$whitelist"; then
-              echo "Successfully matched hash $whitelist with $lib"
-              accepted=1
-              break
+              if [ "$?" -eq 0 ]; then
+                echo "Successfully matched hash $whitelist with $lib"
+                accepted=1
+                break
+              else
+                echo "$lib returned non-zero exit code"
+                exit 1
+              fi
             else
               echo "Failed to match hash $whitelist with $lib, trying next entry"
             fi
@@ -106,6 +111,9 @@ jobs:
       run: |
         for bin in $(find ci-release -name "yume-pdq*" -executable); do
           echo "Testing $bin"
+          
+          $bin vectorization-info || exit 1
+
           rm -f output.tmp          
           convert 'test-data/aaa-orig.jpg' -resize 512x512! -colorspace gray -depth 8 gray:- | \
             "$bin" pipe -f q+hex+lf | tee output.tmp

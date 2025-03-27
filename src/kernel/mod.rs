@@ -114,7 +114,7 @@ pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-pub(crate) fn smart_kernel_fallback() -> SmartKernelConcreteType {
+pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
     DefaultKernelNoPadding::default()
 }
 

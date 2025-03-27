@@ -493,7 +493,7 @@ where
             Self::Buffer1LengthY,
         >,
     ) {
-        if self.materialized_decision {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if self.preferred.jarosz_compress_opt::<false>(buffer, output) {
                 return;
             } else {
@@ -525,7 +525,7 @@ where
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if self
                 .preferred
                 .quantize_opt::<false>(_input, _threshold, _output)
@@ -553,7 +553,7 @@ where
             Self::OutputDimension,
         >,
     ) -> Self::InternalFloat {
-        if self.materialized_decision {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if let Some(sum) = self.preferred.sum_of_gradients_opt::<false>(input) {
                 return sum;
             } else {
@@ -586,7 +586,7 @@ where
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             self.preferred.dct2d_opt::<false>(_buffer, _tmp_row_buffer, _output);
             return;
         }
