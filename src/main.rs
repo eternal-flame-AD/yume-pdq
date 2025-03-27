@@ -26,6 +26,7 @@ use std::{
     io::{Read, Write},
     ops::Div,
     ptr::addr_of,
+    sync::atomic::AtomicU64,
     thread::{self},
 };
 
@@ -191,7 +192,7 @@ where
     // defensive padding at least 2 times register width to:
     //  - reduce false sharing
     //  - ensure if there was a buffer overrun, it's not catastrophic
-    _pad0: BufferPad,
+    half_frames_processed: AtomicU64,
     buf1_input: Align32<GenericArray<GenericArray<f32, K::InputDimension>, K::InputDimension>>,
     _pad1: BufferPad,
     buf1_intermediate:
@@ -259,7 +260,10 @@ where
             buffers.buf2_intermediate.fill_with(Default::default);
             buffers.buf2_pdqf.fill_with(Default::default);
             buffers.buf2_output.fill_with(Default::default);
-        }
+            buffers
+                .half_frames_processed
+                .store(0, std::sync::atomic::Ordering::SeqCst);
+        };
         Self {
             barrier: std::sync::Barrier::new(2),
             buffers: unsafe { buffers.assume_init() },
@@ -288,9 +292,6 @@ where
 
         let mut have_data = false;
         let mut i_am_reading = I_AM_READING_INITIALLY;
-        let mut frames_processed = 0;
-        let mut last_checkpoint = std::time::Instant::now();
-        let mut last_checkpoint_frames = 0u64;
         loop {
             if i_am_reading {
                 // since the other thread start to the last branch here (no data), we do the same here, and synchronize right before side-effects
@@ -473,22 +474,9 @@ where
                     writer_mut.flush()?;
 
                     if I_AM_READING_INITIALLY && STATS {
-                        frames_processed += 1;
-                        if frames_processed & (1 << 10) == 0 {
-                            let now = std::time::Instant::now();
-                            let delta_time = now.duration_since(last_checkpoint);
-                            let delta_frames = (frames_processed - last_checkpoint_frames) * 2;
-                            if delta_time > std::time::Duration::from_secs(1) {
-                                eprintln!(
-                                    "{} frames processed in {:?} ({} fps)",
-                                    delta_frames,
-                                    delta_time,
-                                    delta_frames as f64 / delta_time.as_secs_f64()
-                                );
-                                last_checkpoint = now;
-                                last_checkpoint_frames = frames_processed;
-                            }
-                        }
+                        self.buffers
+                            .half_frames_processed
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
             } else {
@@ -657,8 +645,31 @@ fn main() {
                                     }
                                 }).expect("Failed to spawn worker thread 1");
 
+                                let mut time_since_last_stat = std::time::Instant::now();
+                                let mut elapsed = std::time::Duration::ZERO;
+                                let mut last_frames_processed_half = 0;
                                 loop {
-                                    std::thread::park_timeout(std::time::Duration::from_secs(1));
+                                    std::thread::park_timeout(std::time::Duration::from_millis(1000));
+                                    let now = std::time::Instant::now();
+                                    let delta_time = now.duration_since(time_since_last_stat);
+                                    if delta_time > std::time::Duration::from_secs(1) {
+                                        elapsed += delta_time;
+                                        time_since_last_stat = now;
+                                        let new_frames_processed_half = processor.buffers.half_frames_processed.load(std::sync::atomic::Ordering::Relaxed);
+                                        // assuming 100k frames a second (more than 10 times my maximum possible benchmark speed, only achievable by feeding with /dev/zero or PRNG like Xorshift)
+                                        let delta_frames = (new_frames_processed_half - last_frames_processed_half) * 2;
+                                        last_frames_processed_half = new_frames_processed_half;
+                                        let delta_time_us = delta_time.as_micros() as u64;
+                                        eprintln!(
+                                            "{} new frames processed ({} fps), {} total frames processed ({} fps overall)",
+                                            delta_frames,
+                                            1_000_000 * delta_frames / delta_time_us ,
+                                            new_frames_processed_half * 2,
+                                            // this LHS is likely to be the first to overflow, ( 1_000_000 * 2 ) < 2^21, so we have at least 2^43 * 2 frames to work with
+                                            // it takes ~218.15 days to overflow
+                                            1_000_000 * 2 * last_frames_processed_half  / elapsed.as_micros() as u64
+                                        );
+                                    }
                                     if j1.is_finished() {
                                         match j1.join() {
                                             Ok(r) => match r {
