@@ -22,7 +22,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install pillow numpy
     
-    - name: Install nightly toolchain and musl target
+    - name: Install nightly toolchain and GNU target
       uses: dtolnay/rust-toolchain@nightly
       with:
         components: rust-src
@@ -30,46 +30,51 @@ jobs:
 
     - name: Build GNU targets
       run: |
+        export CARGO_BUILD_RUSTFLAGS="-Ctarget-cpu=native"
+
         # Scalar
         cargo build --release --lib --features "ffi"
         mkdir -p ci-release
+        cp target/release/libyume_pdq.a ci-release/libyume_pdq_scalar.a
         cp target/release/libyume_pdq.so ci-release/libyume_pdq_scalar.so
 
         # Scalar CFI
-        RUSTFLAGS="-C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
+        RUSTFLAGS="-Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_scalar_cfi.so
+        cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_scalar_cfi.a
 
         # Scalar CFI Binary
-        RUSTFLAGS="-Cpanic=abort -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
+        RUSTFLAGS="-Cpanic=abort -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-scalar-gnu-cfi
 
         # AVX2
-        RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --lib --features "ffi"
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma" cargo build --release --lib --features "ffi"
         cp target/release/libyume_pdq.so ci-release/libyume_pdq.so
         cp target/release/libyume_pdq.a ci-release/libyume_pdq.a
 
         # AVX2 CFI
-        RUSTFLAGS="-C target-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_cfi.so
-
+        cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_cfi.a
         # AVX2 CFI Binary
         RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-gnu-cfi
 
         # AVX512
-        RUSTFLAGS="-C target-feature=+avx2,+fma,+avx512f" cargo +nightly build --release --lib --features "ffi avx512"
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f" cargo +nightly build --release --lib --features "ffi avx512"
         cp target/release/libyume_pdq.so ci-release/libyume_pdq_avx512.so
-        cp target/release/libyume_pdq.a ci-release/libyume_avx512.a
+        cp target/release/libyume_pdq.a ci-release/libyume_pdq_avx512.a
 
         # AVX512 CFI
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi avx512"
-        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_avx512_cfi.so
+        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_avx512_cfi.so
+        cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_avx512_cfi.a
 
         # AVX512 CFI Binary
         RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "avx512 cli"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-avx512-gnu-cfi
 
-    - name: Run FFI test
+    - name: Run Shared Library test
       run: |
         cd integration
 
@@ -92,13 +97,15 @@ jobs:
           fi
         done
 
-    - name: Install musl target
+    - name: Install MUSL target
       uses: dtolnay/rust-toolchain@nightly
       with:
         targets: x86_64-unknown-linux-musl
 
     - name: Build musl target binary
       run: |
+        export CARGO_BUILD_RUSTFLAGS="-Ctarget-cpu=native"
+        
         # Scalar
         cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-scalar
@@ -111,7 +118,7 @@ jobs:
         RUSTFLAGS="-C target-feature=+avx2,+fma,+avx512f" cargo build --release --bin yume-pdq --features "cli avx512" --target x86_64-unknown-linux-musl
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-avx512
 
-    - name: Test musl target binary
+    - name: Test all target binaries
       run: |
         for bin in $(find ci-release -name "yume-pdq*" -executable); do
           echo "Testing $bin"
