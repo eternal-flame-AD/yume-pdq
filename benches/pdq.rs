@@ -77,7 +77,7 @@ fn bench_dct2d(c: &mut Criterion) {
         let mut kernel = x86::Avx2F32Kernel;
         b.iter(|| {
             let mut output = GenericArray::default();
-            kernel.dct2d(&input, &mut output);
+            kernel.dct2d(&input, &mut GenericArray::default(), &mut output);
             output
         });
     });
@@ -96,7 +96,7 @@ fn bench_dct2d(c: &mut Criterion) {
         let mut kernel = x86::Avx512F32Kernel;
         b.iter(|| {
             let mut output = GenericArray::default();
-            kernel.dct2d(&input, &mut output);
+            kernel.dct2d(&input, &mut GenericArray::default(), &mut output);
             output
         });
     });
@@ -345,6 +345,7 @@ fn bench_hash(c: &mut Criterion) {
                 GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
                 &mut output,
                 &mut buf1,
+                &mut GenericArray::default(),
                 &mut buf2,
             );
             output
@@ -367,6 +368,7 @@ fn bench_hash(c: &mut Criterion) {
                 GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
                 &mut output,
                 &mut buf1,
+                &mut GenericArray::default(),
                 &mut buf2,
             );
             output
@@ -491,6 +493,7 @@ fn bench_hash_par(c: &mut Criterion) {
                                 GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
                                 output,
                                 &mut buf1,
+                                &mut GenericArray::default(),
                                 &mut buf2,
                             );
                         });
@@ -525,6 +528,7 @@ fn bench_hash_par(c: &mut Criterion) {
                                 GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
                                 output,
                                 &mut buf1,
+                                &mut GenericArray::default(),
                                 &mut buf2,
                             );
                         });

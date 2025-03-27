@@ -1,11 +1,11 @@
 [package]
 name = "yume-pdq"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Yumechi <yume@yumechi.jp>"]
-keywords = ["pdq", "perceptual hash", "image hash", "hash", "similarity", "image matching"]
-categories = ["No standard library", "Multimedia", "Video", "Images"]
-description = "An optimized implementation of the PDQ hash function for high-throughput screening."
+keywords = ["pdq", "perceptual", "NCMEC", "similarity"]
+categories = ["no-std", "mathematics", "computer-vision", "multimedia::images", "multimedia::video"]
+description = "An optimized implementation of the PDQ perceptual hash for high-throughput screening."
 license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/yume-pdq"
 build = "build.rs"

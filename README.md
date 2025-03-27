@@ -12,14 +12,14 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
   - [Pipeline Overview](#pipeline-overview)
   - [Design Goals](#design-goals)
   - [Binary usage](#binary-usage)
-  - [Python usage](#python-usage)
+  - [FFI (C/Python) usage](#ffi-cpython-usage)
   - [Benchmark](#benchmark)
     - [Formal](#formal)
     - [Empirical / End-to-end](#empirical--end-to-end)
       - [Video Processing](#video-processing)
       - [Image Processing](#image-processing)
   - [Accuracy on test set](#accuracy-on-test-set)
-  - [Example code](#example-code)
+  - [API Usage](#api-usage)
   - [License and attributions](#license-and-attributions)
 
 ## Pipeline Overview
@@ -72,7 +72,13 @@ and see if it is faster, it may not be, especially with older generations of AVX
 
 See [binary_usage.md](binary_usage.md) or the CLI help menu for details and practical examples.
 
-## Python usage
+## FFI (C/Python) usage
+
+This library can be built as a shared object that can be used by C/Python applications, or a static library that can be linked into your systems programming application.
+
+Currently there is only one exported symbol.
+
+See [integration/c.c](integration/c.c) for an example of how to use this library from C.
 
 See [integration/python.py](integration/python.py) for an example of how to use this library from Python.
 
@@ -166,7 +172,7 @@ Note higher distance to the `pdqhash` library is expected as they have mandatory
 |                                                       | Default | 26/256 (10.2%)          | 10/256 (3.9%)     | 10/256 (3.9%)     |
 |                                                       | Ref32   | -                       | -                 | 0/256 (0.0%)      |
 
-## Example code
+## API Usage
 
 The Rust API is fully generic over almost all possible parameters, so you don't need to remember constants or write these magic numbers in your code, you can just use type inference provided by generic_array and typenum crates.
 
