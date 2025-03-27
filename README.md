@@ -125,13 +125,18 @@ Finally each kernel is tested against both sources. FPS was collected by running
 
 | Vectorization | Random Source | FFMPEG SMPTE |
 | ------------- | ------------- | ------------ |
-| AVX512        | 7600 fps      | 4050 fps     |
-| AVX2          | 7600 fps      | 4100 fps     |
+| AVX512        | 7900 fps      | 4050 fps     |
+| AVX2          | 7100 fps      | 4100 fps     |
 | Scalar        | 1600 fps      | 1500 fps     |
 
 AVX2 was able to saturate the speed FFMPEG can generate SMPTE bars.
 
 Additionally, the format of the output (hex, binary, or raw, or prefixed with a quality score) does not significantly affect the throughput except the 7600 fps cases.
+
+> **Note for HPC Environment Users**: If you're fortunate enough to be running this on a high core count (>32 physical cores) low frequency (<3GHz) server-grade CPU like a Intel (R) Xeon Gold, AMD (R) EPYC 7000 and 9000 series (I envy you!), you might notice unexpectedly lower single thread/process performance (5-10 times lower than the above numbers). These CPUs are optimized for parallel throughput rather than single-thread speed. For optimal throughput:
+> - Each binary is a duo-thread ping-pong buffer, so you can spawn multiple processes and pin each them to specific cores on the same NUMA node and share cache (there is a CLI flag `--core0 / --core1` to help with this when you build with `--features hpc`) 
+> - Multiple AVX2 processes often outperform a single AVX512 process, this is true AFAIK (I never touched such a system with a CPU released in the last 4 years so not sure about the latest generation)
+> - If you can afford this CPU, you probably already knew this, if you are on a shared system (like a supercomputer) you might want to consult with your system administrator by showing them this document which should help your administrator understand the architectural need to tune your system for this workload.
 
 #### Image Processing
 
