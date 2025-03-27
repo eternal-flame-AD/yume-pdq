@@ -650,25 +650,27 @@ fn main() {
                                 let mut last_frames_processed_half = 0;
                                 loop {
                                     std::thread::park_timeout(std::time::Duration::from_millis(1000));
-                                    let now = std::time::Instant::now();
-                                    let delta_time = now.duration_since(time_since_last_stat);
-                                    if delta_time > std::time::Duration::from_secs(1) {
-                                        elapsed += delta_time;
-                                        time_since_last_stat = now;
-                                        let new_frames_processed_half = processor.buffers.half_frames_processed.load(std::sync::atomic::Ordering::Relaxed);
-                                        // assuming 100k frames a second (more than 10 times my maximum possible benchmark speed, only achievable by feeding with /dev/zero or PRNG like Xorshift)
-                                        let delta_frames = (new_frames_processed_half - last_frames_processed_half) * 2;
-                                        last_frames_processed_half = new_frames_processed_half;
-                                        let delta_time_us = delta_time.as_micros() as u64;
-                                        eprintln!(
-                                            "{} new frames processed ({} fps), {} total frames processed ({} fps overall)",
-                                            delta_frames,
-                                            1_000_000 * delta_frames / delta_time_us ,
-                                            new_frames_processed_half * 2,
-                                            // this LHS is likely to be the first to overflow, ( 1_000_000 * 2 ) < 2^21, so we have at least 2^43 * 2 frames to work with
-                                            // it takes ~218.15 days to overflow
-                                            1_000_000 * 2 * last_frames_processed_half  / elapsed.as_micros() as u64
-                                        );
+                                    if arg_stats {
+                                        let now = std::time::Instant::now();
+                                        let delta_time = now.duration_since(time_since_last_stat);
+                                        if delta_time > std::time::Duration::from_secs(1) {
+                                            elapsed += delta_time;
+                                            time_since_last_stat = now;
+                                            let new_frames_processed_half = processor.buffers.half_frames_processed.load(std::sync::atomic::Ordering::Relaxed);
+                                            // assuming 100k frames a second (more than 10 times my maximum possible benchmark speed, only achievable by feeding with /dev/zero or PRNG like Xorshift)
+                                            let delta_frames = (new_frames_processed_half - last_frames_processed_half) * 2;
+                                            last_frames_processed_half = new_frames_processed_half;
+                                            let delta_time_us = delta_time.as_micros() as u64;
+                                            eprintln!(
+                                                "{} new frames processed ({} fps), {} total frames processed ({} fps overall)",
+                                                delta_frames,
+                                                1_000_000 * delta_frames / delta_time_us ,
+                                                new_frames_processed_half * 2,
+                                                // this LHS is likely to be the first to overflow, ( 1_000_000 * 2 ) < 2^21, so we have at least 2^43 * 2 frames to work with
+                                                // it takes ~218.15 days to overflow
+                                                1_000_000 * 2 * last_frames_processed_half  / elapsed.as_micros() as u64
+                                            );
+                                        }
                                     }
                                     if j1.is_finished() {
                                         match j1.join() {
