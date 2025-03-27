@@ -137,6 +137,14 @@ Additionally, the format of the output (hex, binary, or raw, or prefixed with a 
 > - Each binary is a duo-thread ping-pong buffer, so you can spawn multiple processes and pin each them to specific cores on the same NUMA node and share cache (there is a CLI flag `--core0 / --core1` to help with this when you build with `--features hpc`) 
 > - Multiple AVX2 processes often outperform a single AVX512 process, this is true AFAIK (I never touched such a system with a CPU released in the last 4 years so not sure about the latest generation)
 > - If you can afford this CPU, you probably already knew this, if you are on a shared system (like a supercomputer) you might want to consult with your system administrator by showing them this document which should help your administrator understand the architectural need to tune your system for this workload.
+>
+> However you might never need to do this unless you are sure your upstream data producer can do better, because the reason for this slowdown is:
+>
+> 1. The current benchmark shows the algorithm is memory bandwidth bound, so even if it technically is O(n^2) or O(n^3) depending on how you count it doesn't matter because the memory bandwidth is the limiting factor.
+> 2. When you feed random stream or SMPTE bars, the producer has O(n) complexity but we have O(n^2) complexity with a not small constant factor.
+> 3. Thus as the speed of CPU goes down, eventually the algorithm is no longer memory bandwidth bound and throughput will drop by a factor of 4 for a 2x reduction in clock speed. (hence the "5-10x slowdown" in the previous paragraph)
+> 4. However any real-life workload producer is rarely O(n), they often need to do parsing, decompression, resizing, etc. Which make the slowdown in yume-pdq less likely to be a significant bottleneck.
+> 
 
 #### Image Processing
 
