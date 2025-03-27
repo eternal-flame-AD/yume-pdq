@@ -29,15 +29,14 @@ use std::{
 };
 
 use rug::Float as RFloat;
-use vergen::{BuildBuilder, CargoBuilder, Emitter};
 
 trait MiniFloat:
     Add<Output = Self>
     + Sub<Output = Self>
     + Mul<Output = Self>
     + Div<Output = Self>
-    + AddAssign<Self>
-    + SubAssign<Self>
+    + SubAssign
+    + AddAssign
     + Neg
     + PartialOrd<Self>
     + Clone
@@ -54,18 +53,7 @@ trait MiniFloat:
     fn to_f64(self) -> f64;
 }
 
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    PartialOrd,
-    derive_more::Add,
-    derive_more::Sub,
-    derive_more::AddAssign,
-    derive_more::SubAssign,
-    derive_more::MulAssign,
-    derive_more::DivAssign,
-)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 struct MultiPrecF<const PREC: u32 = 128>(RFloat);
 
 impl<const PREC: u32> Mul for MultiPrecF<PREC> {
@@ -89,6 +77,34 @@ impl<const PREC: u32> Neg for MultiPrecF<PREC> {
 
     fn neg(self) -> Self {
         Self(self.0.neg())
+    }
+}
+
+impl<const PREC: u32> Add for MultiPrecF<PREC> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        Self(self.0.add(rhs.0))
+    }
+}
+
+impl<const PREC: u32> Sub for MultiPrecF<PREC> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self {
+        Self(self.0.sub(rhs.0))
+    }
+}
+
+impl<const PREC: u32> AddAssign for MultiPrecF<PREC> {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
+}
+
+impl<const PREC: u32> SubAssign for MultiPrecF<PREC> {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
     }
 }
 
@@ -371,15 +387,14 @@ fn lerp(a: f64, b: f64, p: u32, n: u32) -> f64 {
 }
 
 fn main() {
-    let build = BuildBuilder::all_build().expect("Failed to build build information");
-    let cargo = CargoBuilder::all_cargo().expect("Failed to build cargo information");
-    Emitter::default()
-        .add_instructions(&build)
-        .expect("Failed to add build information")
-        .add_instructions(&cargo)
-        .expect("Failed to add cargo information")
-        .emit()
-        .expect("Failed to emit build information");
+    println!("cargo:rustc-env=BUILD_CFG_TARGET_FEATURES={}", {
+        let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
+        target_features
+    });
+    println!("cargo:rustc-env=BUILD_OPT_LEVEL={}", {
+        let opt_level = std::env::var("OPT_LEVEL").unwrap();
+        opt_level
+    });
 
     let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
 
@@ -480,15 +495,48 @@ fn main() {
     file.set_len(0).unwrap();
     let nrows = 16;
     let ncols = 127;
+    let padding = 16; // f32x16 lanes
     let nelems = nrows * ncols;
-    writeln!(file, "/// The DCT matrix number of rows").unwrap();
-    writeln!(file, "pub const DCT_MATRIX_NROWS: usize = {};", nrows).unwrap();
-    writeln!(file, "/// The DCT matrix number of columns").unwrap();
-    writeln!(file, "pub const DCT_MATRIX_NCOLS: usize = {};", ncols).unwrap();
-    writeln!(file, "/// The DCT matrix number of elements").unwrap();
-    writeln!(file, "pub const DCT_MATRIX_NELEMS: usize = {};", nelems).unwrap();
-    writeln!(file, "/// The DCT matrix in row-major order").unwrap();
-    writeln!(file, "pub static DCT_MATRIX_RMAJOR: [f32; {}] = [", nelems).unwrap();
+    writeln!(file, "/// The DCT matrix number of rows, this is always 16").unwrap();
+    writeln!(
+        file,
+        "pub type DctMatrixNumRows = {};",
+        generate_typename_for_typeint(nrows as u64)
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "/// The DCT matrix number of columns, this is always 127"
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "pub type DctMatrixNumCols = {};",
+        generate_typename_for_typeint(ncols as u64)
+    )
+    .unwrap();
+    writeln!(file, "/// The DCT matrix number of elements as a compile-time resolved typenum for your convenience since type-level math is hard").unwrap();
+    writeln!(
+        file,
+        "pub type DctMatrixNumElements = {};",
+        generate_typename_for_typeint(nelems as u64)
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "/// The DCT matrix in row-major order (some zero-padding elements are added to the end for your convenience)"
+    )
+    .unwrap();
+    writeln!(
+        file,
+        "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_dct_matrix_rmajor_f32_{nrows}_by_{ncols}_pad_{padding}\"))] \
+        pub static DCT_MATRIX_RMAJOR: \
+        crate::alignment::DefaultPaddedArray<f32, {}, {}> = \
+        crate::alignment::DefaultPaddedArray::new(*::generic_array::GenericArray::from_slice(&[",
+        generate_typename_for_typeint(nelems as u64),
+        generate_typename_for_typeint(padding as u64)
+    )
+    .unwrap();
     for i in 1..=16 {
         for j in 0..127 {
             let v: MultiPrecF = d_value(i, j, ncols);
@@ -501,14 +549,18 @@ fn main() {
             .unwrap();
         }
     }
-    writeln!(file, "];").unwrap();
+    writeln!(file, "]));").unwrap();
 
     writeln!(file).unwrap();
-    writeln!(file, "/// The DCT matrix in row-major order (f64)").unwrap();
+    writeln!(file, "/// The DCT matrix in row-major order (f64) (some zero-padding elements are added to the end for your convenience)").unwrap();
     writeln!(
         file,
-        "pub static DCT_MATRIX_RMAJOR_64: [f64; {}] = [",
-        nelems
+        "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_dct_matrix_rmajor_f64_{nrows}_by_{ncols}_pad_{padding}\"))] \
+        pub static DCT_MATRIX_RMAJOR_64: \
+        crate::alignment::DefaultPaddedArray<f64, {}, {}> = \
+        crate::alignment::DefaultPaddedArray::new(*::generic_array::GenericArray::from_slice(&[",
+        generate_typename_for_typeint(nelems as u64),
+        generate_typename_for_typeint(padding as u64)
     )
     .unwrap();
     for i in 1..=16 {
@@ -523,7 +575,7 @@ fn main() {
             .unwrap();
         }
     }
-    writeln!(file, "];").unwrap();
+    writeln!(file, "]));").unwrap();
 
     writeln!(file).unwrap();
 
@@ -579,7 +631,8 @@ fn main() {
     .unwrap();
     writeln!(
         tent_file,
-        "pub static TENT_FILTER_WEIGHTS: [f32; {}] = [",
+        "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_tent_filter_weights_{effective_rows}_by_{effective_cols}\"))] \
+        pub static TENT_FILTER_WEIGHTS: [f32; {}] = [",
         effective_rows * effective_cols
     )
     .unwrap();
@@ -608,7 +661,8 @@ fn main() {
     .unwrap();
     writeln!(
         tent_file,
-        "pub static TENT_FILTER_WEIGHTS_X8: [f32; {}] = [",
+        "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_tent_filter_weights_x8_{effective_rows}_by_{effective_cols}\"))] \
+        pub static TENT_FILTER_WEIGHTS_X8: [f32; {}] = [",
         effective_rows * 8,
     )
     .unwrap();

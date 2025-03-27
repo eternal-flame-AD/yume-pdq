@@ -1,0 +1,142 @@
+name: FFI Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install ImageMagick
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y imagemagick
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pillow numpy
+    
+    - name: Install nightly toolchain and musl target
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rust-src
+        targets: x86_64-unknown-linux-gnu
+
+    - name: Build GNU targets
+      run: |
+        # Scalar
+        cargo build --release --lib --features "ffi"
+        mkdir -p ci-release
+        cp target/release/libyume_pdq.so ci-release/libyume_pdq_scalar.so
+
+        # Scalar CFI
+        RUSTFLAGS="-C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
+        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_scalar_cfi.so
+
+        # Scalar CFI Binary
+        RUSTFLAGS="-Cpanic=abort -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
+        cp target/release-no-lto/yume-pdq ci-release/yume-pdq-scalar-gnu-cfi
+
+        # AVX2
+        RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --lib --features "ffi"
+        cp target/release/libyume_pdq.so ci-release/libyume_pdq.so
+        cp target/release/libyume_pdq.a ci-release/libyume_pdq.a
+
+        # AVX2 CFI
+        RUSTFLAGS="-C target-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
+        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_cfi.so
+
+        # AVX2 CFI Binary
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
+        cp target/release-no-lto/yume-pdq ci-release/yume-pdq-gnu-cfi
+
+        # AVX512
+        RUSTFLAGS="-C target-feature=+avx2,+fma,+avx512f" cargo +nightly build --release --lib --features "ffi avx512"
+        cp target/release/libyume_pdq.so ci-release/libyume_pdq_avx512.so
+        cp target/release/libyume_pdq.a ci-release/libyume_avx512.a
+
+        # AVX512 CFI
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi avx512"
+        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_avx512_cfi.so
+
+        # AVX512 CFI Binary
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma,+avx512f -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "avx512 cli"
+        cp target/release-no-lto/yume-pdq ci-release/yume-pdq-avx512-gnu-cfi
+
+    - name: Run FFI test
+      run: |
+        cd integration
+
+        for lib in ci-release/*.so; do
+          accepted=0
+          for whitelist in test-data/aaa-orig.jpg.expect; do
+            if DYLIB_LOCATION=$lib python hash.py $whitelist | grep $whitelist; then
+              echo "Successfully matched hash $whitelist with $lib"
+              accepted=1
+              break
+            else
+              echo "Failed to match hash $whitelist with $lib, trying next entry"
+            fi
+          done
+          if [ $accepted -eq 0 ]; then
+            echo "No whitelist matched with $lib output"
+            exit 1
+          else
+            echo "Success with $lib"
+          fi
+        done
+
+    - name: Install musl target
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        targets: x86_64-unknown-linux-musl
+
+    - name: Build musl target binary
+      run: |
+        # Scalar
+        cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
+        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-scalar
+
+        # AVX2
+        RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
+        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq
+
+        # AVX512
+        RUSTFLAGS="-C target-feature=+avx2,+fma,+avx512f" cargo build --release --bin yume-pdq --features "cli avx512" --target x86_64-unknown-linux-musl
+        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-avx512
+
+    - name: Test musl target binary
+      run: |
+        for bin in $(find ci-release -name "yume-pdq*" -executable); do
+          echo "Testing $bin"
+          rm -f output.tmp          
+          convert 'test-data/aaa-orig.jpg' -resize 512x512! -colorspace gray -depth 8 gray:- | \
+            $bin pipe -f q+hex+lf | tee output.tmp
+          matched=0
+          for whitelist in test-data/aaa-orig.jpg.expect; do
+            if diff output.tmp $whitelist; then
+              echo "Successfully matched hash $whitelist with $bin"
+              matched=1
+              break
+            fi
+          done
+          if [ $matched -eq 0 ]; then
+            echo "No whitelist matched with $bin output"
+            exit 1
+          else
+            echo "Success with $bin"
+          fi
+        done
+
+    - name: Publish Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: artifacts-linux
+        path: ci-release
+        retention-days: 30

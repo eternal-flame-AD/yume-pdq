@@ -1,5 +1,8 @@
 use core::ops::{Deref, DerefMut};
 
+use const_default::ConstDefault;
+use generic_array::{ArrayLength, GenericArray};
+
 #[repr(align(32))]
 /// Align the item to 32 bytes.
 pub struct Align32<T>(pub T);
@@ -95,5 +98,73 @@ impl<T> Deref for Align64<T> {
 impl<T> DerefMut for Align64<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+#[repr(C)]
+/// A double-ended padded array.
+pub struct DefaultPaddedArray<E, L: ArrayLength, P: ArrayLength> {
+    _pad0: GenericArray<E, P>,
+    inner: GenericArray<E, L>,
+    _pad1: GenericArray<E, P>,
+}
+
+impl<E, L: ArrayLength, P: ArrayLength> DefaultPaddedArray<E, L, P> {
+    /// Get a reference to the inner array.
+    pub fn as_ref(&self) -> &GenericArray<E, L> {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner array.
+    pub fn as_mut(&mut self) -> &mut GenericArray<E, L> {
+        &mut self.inner
+    }
+
+    /// Get a pointer to the inner array.
+    pub fn as_ptr(&self) -> *const E {
+        self.inner.as_ptr()
+    }
+
+    /// Get a mutable pointer to the inner array.
+    pub fn as_mut_ptr(&mut self) -> *mut E {
+        self.inner.as_mut_ptr()
+    }
+}
+
+impl<E: ConstDefault, L: ArrayLength, P: ArrayLength> DefaultPaddedArray<E, L, P>
+where
+    <P as ArrayLength>::ArrayType<E>: ConstDefault,
+{
+    /// Create a new `DefaultPaddedArray` with the given inner array.
+    pub const fn new(inner: GenericArray<E, L>) -> Self {
+        Self {
+            _pad0: GenericArray::const_default(),
+            inner,
+            _pad1: GenericArray::const_default(),
+        }
+    }
+}
+
+impl<E: ConstDefault, L: ArrayLength, P: ArrayLength> Deref for DefaultPaddedArray<E, L, P> {
+    type Target = GenericArray<E, L>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<E: ConstDefault, L: ArrayLength, P: ArrayLength> DerefMut for DefaultPaddedArray<E, L, P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<E: Default, L: ArrayLength, P: ArrayLength> Default for DefaultPaddedArray<E, L, P> {
+    fn default() -> Self {
+        Self {
+            _pad0: GenericArray::default(),
+            inner: GenericArray::default(),
+            _pad1: GenericArray::default(),
+        }
     }
 }

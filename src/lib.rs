@@ -26,20 +26,79 @@
 pub use generic_array::GenericArray;
 use kernel::{
     Kernel,
-    type_traits::{DivisibleBy8, SquareOf},
+    type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
 };
 
-use generic_array::{ArrayLength, typenum::U16};
+use generic_array::{
+    ArrayLength,
+    typenum::{B1, U16},
+};
 
 /// PDQ compression kernel
 pub mod kernel;
 
+pub use kernel::smart_kernel;
+
 /// Memory alignment utilities.
 pub mod alignment;
 
-/// Testing utilities for debugging, integrating developers, or generally for fun poking into internals. Not part of the stable API.
+/// Diagnostic utilities for debugging, integrating developers, or generally for fun inspecting internals. Not part of the stable API. Correctness is only checked empirically.
 #[cfg(any(test, all(feature = "unstable", feature = "std")))]
 pub mod testing;
+
+#[cfg(feature = "ffi")]
+pub mod ffi {
+    //! Foreign function interface binding for the PDQ hash function.
+    use generic_array::{sequence::Unflatten, typenum::U32};
+
+    use super::*;
+    use crate::kernel::{SmartKernelConcreteType, SquareGenericArrayExt, smart_kernel_impl};
+    use std::sync::LazyLock;
+
+    const SMART_KERNEL: LazyLock<SmartKernelConcreteType> = LazyLock::new(smart_kernel_impl);
+
+    #[unsafe(export_name = "yume_pdq_hash_smart_kernel")]
+    /// Compute the PDQ hash of a 512x512 single-channel image using [`kernel::smart_kernel`].
+    ///
+    /// # Safety
+    ///
+    /// - `input` must be a pointer to a 512x512 single-channel image in float32 format, row-major order.
+    /// - `threshold` must be a valid aligned pointer to a f32 value or NULL.
+    /// - `output` must be a pointer to a 2x16 array of u8 to receive the final 256-bit hash.
+    /// - `buf1` must be a pointer to a 128x128 array of f32 values to receive the intermediate results of the DCT transform.
+    /// - `tmp` must be a pointer to a 128x1 array of f32 values as scratch space for the DCT transform.
+    /// - `pdqf` must be a pointer to a 16x16 array of f32 values to receive PDQF (unquantized) hash values.
+    ///
+    /// # Returns
+    ///
+    /// The quality of the hash as a f32 value between 0.0 and 1.0. You are responsible for checking whether quality is acceptable.
+    pub unsafe extern "C" fn hash_smart_kernel(
+        input: &[f32; 512 * 512],
+        threshold: *mut f32,
+        output: &mut [u8; 2 * 16],
+        buf1: &mut [f32; 128 * 128],
+        tmp: &mut [f32; 128],
+        pdqf: &mut [f32; 16 * 16],
+    ) -> f32 {
+        let mut kernel = SMART_KERNEL.clone();
+        let input = GenericArray::from_slice(input).unflatten_square_ref();
+        let output = GenericArray::<_, U32>::from_mut_slice(output).unflatten();
+        let buf1 = GenericArray::from_mut_slice(buf1).unflatten_square_mut();
+        let pdqf = GenericArray::from_mut_slice(pdqf).unflatten_square_mut();
+
+        let mut dummy_threshold = 0.0;
+
+        crate::hash_get_threshold(
+            &mut kernel,
+            &input,
+            unsafe { threshold.as_mut().unwrap_or(&mut dummy_threshold) },
+            output,
+            buf1,
+            tmp.into(),
+            pdqf,
+        )
+    }
+}
 
 #[cfg(feature = "lut-utils")]
 /// Some miscellaneous lookup tables that might be helpful for downstream applications.
@@ -57,12 +116,29 @@ pub type PDQHashF<N = f32, L = U16> = GenericArray<GenericArray<N, L>, L>;
 ///
 /// This is a convenience wrapper function and just calls [`hash_get_threshold`] with a dummy output location.
 ///
-/// # Safety
+/// # TLDR how to use this contraption
 ///
-/// Some vectorized kernels may read out of bounds by at most 1 element to the right.
+/// ```rust,no_run
+/// use yume_pdq::{smart_kernel, GenericArray};
 ///
-/// They do not affect the final result but if your buffer is right at the edge of a page boundary
-/// you may want to use a padding struct to avoid segmentation faults.
+/// // Create a 512x512 input image
+/// //
+/// // values 0.0-255.0 if you want the quality for be accurate, otherwise scale is not important
+/// // this is a known limitation and will be fixed in the future
+/// let input: GenericArray<GenericArray<f32, _>, _> = GenericArray::default();
+///
+/// // Get the optimal kernel for your CPU
+/// let mut kernel = smart_kernel();
+///
+/// // Allocate output and temporary buffers (make sure your stack is big enough or allocate on the heap)
+/// let mut output = GenericArray::default();  // Will contain the final 256-bit hash
+/// let mut buf1 = GenericArray::default();    // Temporary buffer
+/// let mut row_tmp = GenericArray::default();    // Temporary buffer
+/// let mut pdqf = GenericArray::default();    // Temporary buffer (PDQF unquantized hash)
+///
+/// // Compute the hash
+/// let quality = yume_pdq::hash(&mut kernel, &input, &mut output, &mut buf1, &mut row_tmp, &mut pdqf);
+///
 pub fn hash<K: Kernel>(
     kernel: &mut K,
     input: &GenericArray<GenericArray<f32, K::InputDimension>, K::InputDimension>,
@@ -71,6 +147,7 @@ pub fn hash<K: Kernel>(
         K::OutputDimension,
     >,
     buf1: &mut GenericArray<GenericArray<K::InternalFloat, K::Buffer1WidthX>, K::Buffer1LengthY>,
+    tmp: &mut GenericArray<K::InternalFloat, K::Buffer1WidthX>,
     // the floating point version of the input image
     pdqf: &mut PDQHashF<K::InternalFloat, K::OutputDimension>,
 ) -> f32
@@ -80,18 +157,20 @@ where
     <<K as Kernel>::InputDimension as SquareOf>::Output: ArrayLength,
     <K as Kernel>::OutputDimension: SquareOf,
     <<K as Kernel>::OutputDimension as SquareOf>::Output: ArrayLength,
+    <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
 {
-    hash_get_threshold(kernel, input, &mut Default::default(), output, buf1, pdqf)
+    hash_get_threshold(
+        kernel,
+        input,
+        &mut Default::default(),
+        output,
+        buf1,
+        tmp,
+        pdqf,
+    )
 }
 
 /// Compute the PDQ hash of a 512x512 single-channel image using the given kernel, obtaining the threshold value useful for [`kernel::threshold::threshold_2d_f32`].
-///
-/// # Safety
-///
-/// Some vectorized kernels may read out of bounds by at most 1 element to the right.
-///
-/// They do not affect the final result but if your buffer is right at the edge of a page boundary
-/// you may want to use a padding struct to avoid segmentation faults.
 #[inline]
 pub fn hash_get_threshold<K: Kernel>(
     kernel: &mut K,
@@ -102,6 +181,7 @@ pub fn hash_get_threshold<K: Kernel>(
         K::OutputDimension,
     >,
     buf1: &mut GenericArray<GenericArray<K::InternalFloat, K::Buffer1WidthX>, K::Buffer1LengthY>,
+    tmp: &mut GenericArray<K::InternalFloat, K::Buffer1WidthX>,
     // the floating point version of the input image
     pdqf: &mut PDQHashF<K::InternalFloat, K::OutputDimension>,
 ) -> f32
@@ -111,9 +191,10 @@ where
     <K as Kernel>::OutputDimension: SquareOf,
     <<K as Kernel>::OutputDimension as SquareOf>::Output: ArrayLength,
     <K as Kernel>::OutputDimension: DivisibleBy8,
+    <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
 {
     kernel.jarosz_compress(input, buf1);
-    kernel.dct2d(buf1, pdqf);
+    kernel.dct2d(buf1, tmp, pdqf);
     let gradient = kernel.sum_of_gradients(pdqf);
     let quality = K::adjust_quality(gradient);
 
@@ -125,20 +206,18 @@ where
 ///
 /// This is called PDQF in the original paper.
 ///
-/// # Safety
-///
-/// Some vectorized kernels may read out of bounds by at most 1 element to the right.
-///
-/// They do not affect the final result but if your buffer is right at the edge of a page boundary
-/// you may want to use a padding struct to avoid segmentation faults.
 pub fn hash_float<K: Kernel>(
     kernel: &mut K,
     input: &GenericArray<GenericArray<f32, K::InputDimension>, K::InputDimension>,
     output: &mut PDQHashF<K::InternalFloat, K::OutputDimension>,
     buf1: &mut GenericArray<GenericArray<K::InternalFloat, K::Buffer1WidthX>, K::Buffer1LengthY>,
-) -> f32 {
+    tmp: &mut GenericArray<K::InternalFloat, K::Buffer1WidthX>,
+) -> f32
+where
+    <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+{
     kernel.jarosz_compress(input, buf1);
-    kernel.dct2d(buf1, output);
+    kernel.dct2d(buf1, tmp, output);
     let gradient = kernel.sum_of_gradients(output);
 
     K::adjust_quality(gradient)
@@ -156,7 +235,7 @@ mod tests {
     use pdqhash::image::{self, DynamicImage};
 
     use crate::kernel::{
-        DefaultKernel, ReferenceKernel, SquareGenericArrayExt,
+        ReferenceKernel, SquareGenericArrayExt,
         type_traits::{DivisibleBy8, SquareOf},
     };
 
@@ -178,6 +257,7 @@ mod tests {
     fn test_hash_impl_lib<K: Kernel>(kernel: &mut K)
     where
         K: Kernel<OutputDimension = U16, InputDimension = U512>,
+        K::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
     {
         let mut buf1 = Box::default();
         let mut buf2 = Box::default();
@@ -210,6 +290,7 @@ mod tests {
                 GenericArray::<_, _>::from_slice(input_image_f.as_slice()).unflatten_square_ref(),
                 &mut output,
                 &mut buf1,
+                &mut GenericArray::default(),
                 &mut buf2,
             );
 
@@ -246,6 +327,9 @@ mod tests {
         <OD as Mul<OD>>::Output: ArrayLength,
         ReferenceKernel<K::InternalFloat>:
             Kernel<InputDimension = ID, InternalFloat = K::InternalFloat, OutputDimension = OD>,
+        <ReferenceKernel<K::InternalFloat> as Kernel>::RequiredHardwareFeature:
+            EvaluateHardwareFeature<EnabledStatic = B1>,
+        K::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
     {
         let mut buf1 = Box::default();
         let mut buf1a = Box::default();
@@ -279,6 +363,7 @@ mod tests {
                 GenericArray::from_slice(input_image.as_slice()).unflatten_square_ref(),
                 &mut output,
                 &mut buf1,
+                &mut GenericArray::default(),
                 &mut buf2,
             );
             let mut ref_kernel = ReferenceKernel::<K::InternalFloat>::default();
@@ -289,6 +374,7 @@ mod tests {
                 &mut thres,
                 &mut output_ref,
                 &mut buf1a,
+                &mut GenericArray::default(),
                 &mut buf2,
             );
             let mut distance = 0;
@@ -325,11 +411,12 @@ mod tests {
         let mut pdqf = GenericArray::<GenericArray<f32, U16>, U16>::default();
 
         hash_get_threshold(
-            &mut DefaultKernel,
+            &mut kernel::DefaultKernelNoPadding::default(),
             GenericArray::from_slice(input_image.as_slice()).unflatten_square_ref(),
             &mut thres,
             &mut output,
             &mut buf1,
+            &mut GenericArray::default(),
             &mut pdqf,
         );
 
@@ -346,6 +433,7 @@ mod tests {
     >(
         kernel: &mut K,
     ) where
+        K::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
         ReferenceKernel<crate::kernel::float128::ArbFloat<96>>: Kernel<
                 InputDimension = ID,
                 InternalFloat = crate::kernel::float128::ArbFloat<96>,
@@ -401,6 +489,7 @@ mod tests {
                 GenericArray::from_slice(input_image.as_slice()).unflatten_square_ref(),
                 &mut output,
                 &mut buf1,
+                &mut GenericArray::default(),
                 &mut buf2,
             );
             let mut ref_kernel = ReferenceKernel::<ArbFloat<96>>::default();
@@ -409,6 +498,7 @@ mod tests {
                 GenericArray::from_slice(input_image.as_slice()).unflatten_square_ref(),
                 &mut output_ref,
                 &mut buf1a,
+                &mut GenericArray::default(),
                 &mut buf2a,
             );
             let mut distance = 0;
@@ -431,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_hash_impl_base() {
-        let mut kernel = kernel::DefaultKernel;
+        let mut kernel = kernel::DefaultKernelNoPadding::default();
         test_hash_impl_lib(&mut kernel);
         test_hash_impl_ref(&mut kernel);
     }
@@ -439,7 +529,7 @@ mod tests {
     #[cfg(feature = "reference-rug")]
     #[test]
     fn test_hash_impl_base_arb() {
-        let mut kernel = kernel::DefaultKernel;
+        let mut kernel = kernel::DefaultKernelNoPadding::default();
         test_hash_impl_ref_arb(&mut kernel);
     }
 
@@ -451,13 +541,20 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(
+        target_arch = "x86_64",
+        all(target_feature = "avx2", target_feature = "fma")
+    ))]
     fn test_hash_impl_avx2() {
         let mut kernel = kernel::x86::Avx2F32Kernel;
         test_hash_impl_lib(&mut kernel);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "reference-rug"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        all(target_feature = "avx2", target_feature = "fma"),
+        feature = "reference-rug"
+    ))]
     #[test]
     fn test_hash_impl_avx2_arb() {
         let mut kernel = kernel::x86::Avx2F32Kernel;
@@ -465,13 +562,22 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        feature = "avx512",
+        all(target_feature = "avx512f")
+    ))]
     fn test_hash_impl_avx512() {
         let mut kernel = kernel::x86::Avx512F32Kernel;
         test_hash_impl_lib(&mut kernel);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "reference-rug", feature = "avx512"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        feature = "reference-rug",
+        target_feature = "avx512f",
+        feature = "avx512"
+    ))]
     #[test]
     fn test_hash_impl_avx512_arb() {
         let mut kernel = kernel::x86::Avx512F32Kernel;

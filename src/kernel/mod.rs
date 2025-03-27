@@ -25,17 +25,14 @@
 
 use core::{
     fmt::{Debug, Display},
-    ops::Mul,
+    ops::Add,
 };
 
-#[cfg_attr(not(feature = "reference-rug"), allow(unused_imports))]
+#[allow(unused_imports)]
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{U16, U127, U256},
-};
-use generic_array::{
     sequence::Flatten,
-    typenum::{U2, U512},
+    typenum::{B1, U0, U1, U2, U4, U16, U127, U128, U256, U512, Unsigned},
 };
 
 #[cfg_attr(not(feature = "reference-rug"), allow(unused_imports))]
@@ -43,11 +40,16 @@ use num_traits::{FromPrimitive, NumCast, Signed, ToPrimitive, float::FloatCore};
 
 pub use generic_array;
 use sealing::Sealed;
-use type_traits::{DivisibleBy8, SquareOf};
+use type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf, Term};
+
+use crate::alignment::DefaultPaddedArray;
 
 /// Kernels based on x86-64 intrinsics.
 #[cfg(target_arch = "x86_64")]
 pub mod x86;
+
+/// A fallback router for kernels.
+pub mod router;
 
 #[cfg(feature = "reference-rug")]
 /// 128-bit floating point type.
@@ -65,6 +67,56 @@ pub mod type_traits;
 include!(concat!(env!("OUT_DIR"), "/dct_matrix.rs"));
 include!(concat!(env!("OUT_DIR"), "/tent_filter_weights.rs"));
 include!(concat!(env!("OUT_DIR"), "/convolution_offset.rs"));
+
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) type SmartKernelConcreteType = DefaultKernelNoPadding;
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(not(feature = "avx512"))]
+pub(crate) type SmartKernelConcreteType =
+    router::KernelRouter<x86::Avx2F32Kernel, DefaultKernelPadXYTo128>;
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(feature = "avx512")]
+pub(crate) type SmartKernelConcreteType = router::KernelRouter<
+    x86::Avx512F32Kernel,
+    router::KernelRouter<x86::Avx2F32Kernel, DefaultKernelPadXYTo128>,
+>;
+
+/// Return an opaque kernel object that is likely what you want. (based on your feature flags)
+#[inline(always)]
+pub fn smart_kernel() -> impl Kernel<
+    RequiredHardwareFeature = impl EvaluateHardwareFeature<EnabledStatic = B1>,
+    InputDimension = U512,
+    OutputDimension = U16,
+    InternalFloat = f32,
+> + Clone {
+    smart_kernel_impl()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
+    #[allow(unused_imports)]
+    use router::KernelRouter;
+
+    #[cfg(feature = "avx512")]
+    {
+        KernelRouter::new(x86::Avx2F32Kernel, DefaultKernelPadXYTo128::default())
+            .layer_on_top(x86::Avx512F32Kernel)
+    }
+
+    #[cfg(not(feature = "avx512"))]
+    {
+        KernelRouter::new(x86::Avx2F32Kernel, DefaultKernelPadXYTo128::default())
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+pub(crate) fn smart_kernel_fallback() -> SmartKernelConcreteType {
+    DefaultKernelNoPadding::default()
+}
 
 mod sealing {
     /// Private sealing trait
@@ -154,10 +206,7 @@ pub const QUALITY_ADJUST_DIVISOR: usize = 180;
 /// A typical matching threshold is distance <=31 bits out of 256, well within the error margin.
 ///
 /// A scalar (auto-vectorized) implementation is provided in [`DefaultKernel`].
-pub trait Kernel
-where
-    <Self::OutputDimension as Mul<Self::OutputDimension>>::Output: ArrayLength,
-{
+pub trait Kernel {
     /// The width of the first stage (compression) buffer.
     type Buffer1WidthX: ArrayLength;
     /// The length of the first stage (compression) buffer.
@@ -165,7 +214,12 @@ where
     /// The width and height of the input image.
     type InputDimension: ArrayLength + SquareOf;
     /// The width and height of the output hash.
-    type OutputDimension: ArrayLength + SquareOf + Mul<Self::OutputDimension>;
+    type OutputDimension: ArrayLength + SquareOf;
+    /// The hardware features required to run this kernel
+    type RequiredHardwareFeature: EvaluateHardwareFeature;
+
+    /// Identification token.
+    type Ident: Debug + Display + Clone + Copy + 'static + PartialEq;
 
     /// The internal floating point type used for intermediate calculations.
     type InternalFloat: num_traits::float::TotalOrder
@@ -184,16 +238,14 @@ where
         + Send
         + Sync;
 
-    /// Returns the hardware features required to use this kernel
-    fn required_hardware_features() -> Option<&'static [&'static str]> {
-        None
-    }
+    /// Return an identification of the kernel. For composite kernels that route to multiple kernels, report the kernel that would be executed.
+    fn ident(&self) -> Self::Ident;
 
-    /// Returns true if the required hardware features are met at runtime.
+    /// Shorthand to `<<K as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::met_runtime()`
     ///
     /// Usually downstream applications should be generic over this trait and finally a runtime check is done to dispatch application logic with the suitable kernel.
     fn required_hardware_features_met() -> bool {
-        true
+        Self::RequiredHardwareFeature::met_runtime()
     }
 
     /// Apply a tent-filter average to every 8x8 sub-block of the input buffer and write the result of each sub-block to the output buffer.
@@ -204,7 +256,8 @@ where
             GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
             Self::Buffer1LengthY,
         >,
-    );
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
 
     /// Convert input to binary by thresholding at median
     ///
@@ -225,6 +278,7 @@ where
             Self::OutputDimension,
         >,
     ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
         <Self as Kernel>::OutputDimension: DivisibleBy8;
 
     /// Compute the sum of gradients of the input buffer in both horizontal and vertical directions.
@@ -234,7 +288,9 @@ where
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
-    ) -> Self::InternalFloat;
+    ) -> Self::InternalFloat
+    where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
 
     /// Adjust the quality metric to be between 0 and 1.
     fn adjust_quality(_input: Self::InternalFloat) -> f32;
@@ -246,51 +302,110 @@ where
             GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
             Self::Buffer1LengthY,
         >,
+        _tmp_row_buffer: &mut GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
         _output: &mut GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
-    );
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
 }
 
 /// A pure-Rust implementation of the `Kernel` trait.
-pub struct DefaultKernel;
+#[derive(Clone, Copy)]
+pub struct DefaultKernel<
+    PadIntermediateX: ArrayLength + Add<U127> = U0,
+    PadIntermediateY: ArrayLength + Add<U127> = U0,
+> where
+    <PadIntermediateX as Add<U127>>::Output: ArrayLength,
+    <PadIntermediateY as Add<U127>>::Output: ArrayLength,
+{
+    _marker: core::marker::PhantomData<(PadIntermediateX, PadIntermediateY)>,
+}
 
-impl DefaultKernel {
-    #[inline(always)]
-    pub(crate) fn dct2d_impl(
-        dct_matrix_rmajor: &[f32; 16 * 127],
-        buffer: &GenericArray<GenericArray<f32, U127>, U127>,
-        output: &mut GenericArray<GenericArray<f32, U16>, U16>,
-    ) {
-        for k in 0..16 {
-            let mut tmp = [0.0; 127];
-            for j in 0..127 {
-                let mut sumks = [0.0; 4];
-                for (k2, sumk) in (0..127).zip((0..4).cycle()) {
-                    sumks[sumk] += dct_matrix_rmajor[k * DCT_MATRIX_NCOLS + k2] * buffer[k2][j];
-                }
+/// A default kernel with no padding on the intermediate 127x127 matrix.
+pub type DefaultKernelNoPadding = DefaultKernel<U0, U0>;
+/// A default kernel with padding 1 row on the intermediate 127x127 matrix on the X axis.
+/// This does not make it faster but only useful for sharing buffers with vectorized kernels.
+pub type DefaultKernelPadXTo128 = DefaultKernel<U1, U0>;
+/// A default kernel with padding 1 column on the intermediate 127x127 matrix on the Y axis.
+/// This does not make it faster but only useful for sharing buffers with vectorized kernels.
+pub type DefaultKernelPadYTo128 = DefaultKernel<U0, U1>;
+/// A default kernel with padding 1 row and 1 column on the intermediate 127x127 matrix on both the X and Y axes.
+/// This does not make it faster but only useful for sharing buffers with vectorized kernels.
+pub type DefaultKernelPadXYTo128 = DefaultKernel<U1, U1>;
 
-                tmp[j] = sumks[0] + sumks[1] + sumks[2] + sumks[3];
-            }
-
-            for j in 0..DCT_MATRIX_NROWS {
-                let mut sumks = [0.0; 4];
-                for (m, sumk) in (0..DCT_MATRIX_NCOLS).zip((0..4).cycle()) {
-                    sumks[sumk] += tmp[m] * dct_matrix_rmajor[j * DCT_MATRIX_NCOLS + m];
-                }
-                output[k][j] = sumks[0] + sumks[1] + sumks[2] + sumks[3];
-            }
+impl<PadIntermediateX: ArrayLength + Add<U127>, PadIntermediateY: ArrayLength + Add<U127>> Default
+    for DefaultKernel<PadIntermediateX, PadIntermediateY>
+where
+    <PadIntermediateX as Add<U127>>::Output: ArrayLength,
+    <PadIntermediateY as Add<U127>>::Output: ArrayLength,
+{
+    fn default() -> Self {
+        Self {
+            _marker: core::marker::PhantomData,
         }
     }
 }
 
-impl Kernel for DefaultKernel {
-    type Buffer1WidthX = U127;
-    type Buffer1LengthY = U127;
+impl<PadIntermediateX: ArrayLength + Add<U127>, PadIntermediateY: ArrayLength + Add<U127>>
+    DefaultKernel<PadIntermediateX, PadIntermediateY>
+where
+    <PadIntermediateX as Add<U127>>::Output: ArrayLength,
+    <PadIntermediateY as Add<U127>>::Output: ArrayLength,
+{
+    #[inline(always)]
+    pub(crate) fn dct2d_impl<P: ArrayLength>(
+        dct_matrix_rmajor: &DefaultPaddedArray<f32, DctMatrixNumElements, P>,
+        buffer: &GenericArray<
+            GenericArray<f32, <PadIntermediateX as Add<U127>>::Output>,
+            <PadIntermediateY as Add<U127>>::Output,
+        >,
+        tmp_row_buffer: &mut GenericArray<f32, <PadIntermediateX as Add<U127>>::Output>,
+        output: &mut GenericArray<GenericArray<f32, U16>, U16>,
+    ) {
+        // crate::testing::dump_image("dct2d_input_scalar.ppm", buffer);
+        for k in 0..16 {
+            for j in 0..127 {
+                let mut sumks = [0.0; 4];
+                for (k2, sumk) in (0..127).zip((0..4).cycle()) {
+                    sumks[sumk] +=
+                        dct_matrix_rmajor[k * DctMatrixNumCols::USIZE + k2] * buffer[k2][j];
+                }
+
+                tmp_row_buffer[j] = sumks[0] + sumks[1] + sumks[2] + sumks[3];
+            }
+
+            for j in 0..(DctMatrixNumRows::USIZE) {
+                let mut sumks = [0.0; 4];
+                for (m, sumk) in (0..DctMatrixNumCols::USIZE).zip((0..4).cycle()) {
+                    sumks[sumk] +=
+                        tmp_row_buffer[m] * dct_matrix_rmajor[j * DctMatrixNumCols::USIZE + m];
+                }
+                output[k][j] = sumks[0] + sumks[1] + sumks[2] + sumks[3];
+            }
+        }
+        // crate::testing::dump_image("dct2d_output_scalar.ppm", output);
+    }
+}
+
+impl<PadIntermediateX: ArrayLength + Add<U127>, PadIntermediateY: ArrayLength + Add<U127>> Kernel
+    for DefaultKernel<PadIntermediateX, PadIntermediateY>
+where
+    <PadIntermediateX as Add<U127>>::Output: ArrayLength,
+    <PadIntermediateY as Add<U127>>::Output: ArrayLength,
+{
+    type Buffer1WidthX = <PadIntermediateX as Add<U127>>::Output;
+    type Buffer1LengthY = <PadIntermediateY as Add<U127>>::Output;
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
+    type RequiredHardwareFeature = Term;
+    type Ident = &'static str;
+
+    fn ident(&self) -> &'static str {
+        "default_scalar_autovectorized_f32"
+    }
 
     fn quantize(
         &mut self,
@@ -366,9 +481,10 @@ impl Kernel for DefaultKernel {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        _tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        DefaultKernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, output);
+        Self::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, _tmp_row_buffer, output);
     }
 }
 
@@ -391,6 +507,12 @@ impl Kernel for ReferenceKernel<f32> {
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
+    type RequiredHardwareFeature = Term;
+    type Ident = &'static str;
+
+    fn ident(&self) -> Self::Ident {
+        "reference_scalar_autovectorized"
+    }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
@@ -401,23 +523,23 @@ impl Kernel for ReferenceKernel<f32> {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        let mut intermediate_matrix = [0.0; 127];
         for i in 0..16 {
             for j in 0..127 {
                 let mut sumk = 0.0;
                 for k in 0..127 {
-                    sumk += DCT_MATRIX_RMAJOR[i * DCT_MATRIX_NCOLS + k] * buffer[k][j];
+                    sumk += DCT_MATRIX_RMAJOR[i * DctMatrixNumCols::USIZE + k] * buffer[k][j];
                 }
 
-                intermediate_matrix[j] = sumk;
+                tmp_row_buffer[j] = sumk;
             }
 
             for j in 0..16 {
                 let mut sumk = 0.0;
                 for k in 0..127 {
-                    sumk += intermediate_matrix[k] * DCT_MATRIX_RMAJOR[j * DCT_MATRIX_NCOLS + k];
+                    sumk += tmp_row_buffer[k] * DCT_MATRIX_RMAJOR[j * DctMatrixNumCols::USIZE + k];
                 }
                 output[i][j] = sumk;
             }
@@ -517,6 +639,12 @@ impl Kernel for ReferenceKernel<f64> {
     type InternalFloat = f64;
     type InputDimension = U512;
     type OutputDimension = U16;
+    type RequiredHardwareFeature = Term;
+    type Ident = &'static str;
+
+    fn ident(&self) -> Self::Ident {
+        "reference_scalar_autovectorized_f64"
+    }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f64);
@@ -527,23 +655,24 @@ impl Kernel for ReferenceKernel<f64> {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f64, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        tmp_row_buffer: &mut GenericArray<f64, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f64, U16>, U16>,
     ) {
-        let mut intermediate_matrix = [0.0; 127];
         for i in 0..16 {
             for j in 0..127 {
                 let mut sumk = 0.0;
                 for k in 0..127 {
-                    sumk += DCT_MATRIX_RMAJOR_64[i * DCT_MATRIX_NCOLS + k] * buffer[k][j];
+                    sumk += DCT_MATRIX_RMAJOR_64[i * DctMatrixNumCols::USIZE + k] * buffer[k][j];
                 }
 
-                intermediate_matrix[j] = sumk;
+                tmp_row_buffer[j] = sumk;
             }
 
             for j in 0..16 {
                 let mut sumk = 0.0;
                 for k in 0..127 {
-                    sumk += intermediate_matrix[k] * DCT_MATRIX_RMAJOR_64[j * DCT_MATRIX_NCOLS + k];
+                    sumk +=
+                        tmp_row_buffer[k] * DCT_MATRIX_RMAJOR_64[j * DctMatrixNumCols::USIZE + k];
                 }
                 output[i][j] = sumk;
             }
@@ -647,6 +776,12 @@ impl<const C: u32> Kernel for ReferenceKernel<float128::ArbFloat<C>> {
     type InternalFloat = float128::ArbFloat<C>;
     type InputDimension = U512;
     type OutputDimension = U16;
+    type RequiredHardwareFeature = Term;
+    type Ident = &'static str;
+
+    fn ident(&self) -> &'static str {
+        "reference_scalar_autovectorized_arb_float"
+    }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (float128::ArbFloat::from_usize(QUALITY_ADJUST_DIVISOR).unwrap());
@@ -688,6 +823,7 @@ impl<const C: u32> Kernel for ReferenceKernel<float128::ArbFloat<C>> {
             GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
             Self::Buffer1LengthY,
         >,
+        _tmp_row_buffer: &mut GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<Self::InternalFloat, U16>, U16>,
     ) {
         let d_value = |i: i32, j: i32, n: i32| {
@@ -814,6 +950,8 @@ impl<const C: u32> PreciseKernel for ReferenceKernel<float128::ArbFloat<C>> {}
 
 #[cfg(test)]
 mod tests {
+    use core::ops::Mul;
+
     use num_traits::NumCast;
     use rand::Rng;
 
@@ -828,6 +966,11 @@ mod tests {
             Kernel<InternalFloat = <K as Kernel>::InternalFloat, OutputDimension = OD>,
         OD: Mul<OD>,
         <OD as Mul<OD>>::Output: ArrayLength,
+        K::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+        ReferenceKernel<K::InternalFloat>:
+            Kernel<InternalFloat = K::InternalFloat, OutputDimension = OD>,
+        <ReferenceKernel<K::InternalFloat> as Kernel>::RequiredHardwareFeature:
+            EvaluateHardwareFeature<EnabledStatic = B1>,
     {
         let mut rng = rand::rng();
         let mut input: GenericArray<GenericArray<<K as Kernel>::InternalFloat, OD>, OD> =
@@ -854,7 +997,10 @@ mod tests {
 
     fn test_dct64_impl<K: Kernel>(kernel: &mut K, eps: K::InternalFloat)
     where
+        <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
         ReferenceKernel<K::InternalFloat>: Kernel<InternalFloat = K::InternalFloat>,
+        <ReferenceKernel<K::InternalFloat> as Kernel>::RequiredHardwareFeature:
+            EvaluateHardwareFeature<EnabledStatic = B1>,
     {
         let mut rng = rand::rng();
         let mut input_ref: GenericArray<GenericArray<<K as Kernel>::InternalFloat, _>, _> =
@@ -880,9 +1026,13 @@ mod tests {
 
         let mut output = GenericArray::default();
         let mut output_ref = GenericArray::default();
-        ReferenceKernel::<K::InternalFloat>::default().dct2d(&input_ref, &mut output_ref);
+        ReferenceKernel::<K::InternalFloat>::default().dct2d(
+            &input_ref,
+            &mut GenericArray::default(),
+            &mut output_ref,
+        );
 
-        kernel.dct2d(&input, &mut output);
+        kernel.dct2d(&input, &mut GenericArray::default(), &mut output);
 
         output
             .iter()
@@ -896,7 +1046,13 @@ mod tests {
 
     #[test]
     fn test_dct64_impl_base() {
-        let mut kernel = DefaultKernel;
+        let mut kernel = DefaultKernelNoPadding::default();
+        test_dct64_impl(&mut kernel, NumCast::from(f32::EPSILON * 32.00).unwrap());
+    }
+
+    #[test]
+    fn test_dct64_impl_smart_kernel() {
+        let mut kernel = smart_kernel();
         test_dct64_impl(&mut kernel, NumCast::from(f32::EPSILON * 32.00).unwrap());
     }
 
@@ -907,7 +1063,8 @@ mod tests {
 
         use generic_array::typenum::U128;
 
-        let mut dct_matrix = [1.0; 16 * 127];
+        let mut dct_matrix =
+            DefaultPaddedArray::<_, _, U16>::new(*GenericArray::from_slice(&[1.0; 16 * 127]));
 
         let mut input_buffer_127: Box<GenericArray<GenericArray<f32, U127>, U127>> = Box::default();
         let mut input_buffer_128: Box<GenericArray<GenericArray<f32, U128>, U128>> = Box::default();
@@ -924,10 +1081,19 @@ mod tests {
             });
         let mut output = GenericArray::default();
         let mut output_ref = GenericArray::default();
+        DefaultKernelNoPadding::dct2d_impl(
+            &dct_matrix,
+            &input_buffer_127,
+            &mut GenericArray::default(),
+            &mut output_ref,
+        );
 
-        DefaultKernel::dct2d_impl(&dct_matrix, &input_buffer_127, &mut output_ref);
-
-        x86::Avx2F32Kernel::dct2d_impl(&dct_matrix, &input_buffer_128, &mut output);
+        x86::Avx2F32Kernel::dct2d_impl(
+            &dct_matrix,
+            &input_buffer_128,
+            &mut GenericArray::default(),
+            &mut output,
+        );
 
         for i in 0..16 {
             print!("(reference, actual) = [");
@@ -962,8 +1128,18 @@ mod tests {
             .enumerate()
             .for_each(|(idx, val)| *val = idx as f32);
 
-        DefaultKernel::dct2d_impl(&dct_matrix, &input_buffer_127, &mut output_ref);
-        x86::Avx2F32Kernel::dct2d_impl(&dct_matrix, &input_buffer_128, &mut output);
+        DefaultKernelNoPadding::dct2d_impl(
+            &dct_matrix,
+            &input_buffer_127,
+            &mut GenericArray::default(),
+            &mut output_ref,
+        );
+        x86::Avx2F32Kernel::dct2d_impl(
+            &dct_matrix,
+            &input_buffer_128,
+            &mut GenericArray::default(),
+            &mut output,
+        );
 
         for i in 0..16 {
             print!("(reference, actual) = [");
@@ -983,7 +1159,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[cfg(all(target_arch = "x86_64", feature = "avx512", target_feature = "avx512f"))]
     #[test]
     fn test_dct64_impl_avx512() {
         let mut kernel = x86::Avx512F32Kernel;

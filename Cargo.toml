@@ -1,8 +1,10 @@
 [package]
 name = "yume-pdq"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 authors = ["Yumechi <yume@yumechi.jp>"]
+keywords = ["pdq", "perceptual hash", "image hash", "hash", "similarity", "image matching"]
+categories = ["No standard library", "Multimedia", "Video", "Images"]
 description = "An optimized implementation of the PDQ hash function for high-throughput screening."
 license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/yume-pdq"
@@ -11,21 +13,24 @@ exclude= [
     "test-data/*",
     ".vscode/*",
     "bench-plot/*",
+    "step_by_step/*",
 ]
 
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
 [dependencies]
-generic-array = "1.2"
+const-default = "1"
+generic-array = { version = "1.2", features = ["const-default"] }
 num-traits = { version = "0.2", default-features = false }
 rug = { version = "1.27", optional = true }
-derive_more = { version = "2", features = ["add", "add_assign", "mul", "mul_assign", "not"], optional = true }
-clap = { version = "4.5", features = ["derive"], optional = true }
+clap = { version = "4.5", default-features = false, features = ["std", "help", "usage"], optional = true }
 rand = { version = "0.9", optional = true, default-features = false, features = ["small_rng"] }
 core_affinity = { version = "0.8", optional = true }
 
 [build-dependencies]
-derive_more = { version = "2", features = ["add", "add_assign", "mul_assign"] }
 rug = "1.27"
-vergen = { version = "9", features = ["build", "cargo"] }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -42,10 +47,15 @@ harness = false
 [profile.release]
 lto = true
 
+[profile.release-no-lto]
+inherits = "release"
+lto = false
+
 [features]
 std = []
 avx512 = []
-reference-rug = ["std", "dep:rug", "dep:derive_more"]
+ffi = ["std"]
+reference-rug = ["std", "dep:rug"]
 unstable = []
 lut-utils = []
 cli = ["std", "dep:clap", "dep:rand", "lut-utils"]

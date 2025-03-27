@@ -21,18 +21,96 @@
 
 use core::arch::x86_64::*;
 
+use generic_array::typenum::{IsGreaterOrEqual, U8, Unsigned};
+#[allow(unused_imports)]
 use generic_array::{
-    GenericArray,
+    ArrayLength, GenericArray,
     sequence::Flatten,
-    typenum::{U2, U16, U128, U512},
+    typenum::{B0, B1, U2, U16, U128, U512},
 };
 
-use crate::{alignment::Align32, kernel::Kernel};
+use crate::{
+    alignment::{Align32, DefaultPaddedArray},
+    kernel::Kernel,
+};
 
 use super::{
-    CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_NCOLS, DCT_MATRIX_RMAJOR, QUALITY_ADJUST_DIVISOR,
+    CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_RMAJOR, QUALITY_ADJUST_DIVISOR,
     TENT_FILTER_COLUMN_OFFSET, TENT_FILTER_EFFECTIVE_ROWS, TENT_FILTER_WEIGHTS_X8,
+    type_traits::{
+        EvaluateHardwareFeature, RequireCompilerTimeHardwareFeature, kernel_sealing::KernelSealed,
+    },
 };
+
+const CPUID_REG_EBX: u8 = 0x00;
+const CPUID_REG_ECX: u8 = 0x01;
+
+/// Type-level CPUID flags for x86_64
+pub struct X8664CPUID<const LEAF: u32, const SUB_LEAF: u32, const REG: u8, const BIT: u8> {
+    _private: (),
+}
+
+impl<const LEAF: u32, const SUB_LEAF: u32, const REG: u8, const BIT: u8> KernelSealed
+    for X8664CPUID<LEAF, SUB_LEAF, REG, BIT>
+{
+}
+
+impl<const LEAF: u32, const SUB_LEAF: u32, const REG: u8, const BIT: u8>
+    X8664CPUID<LEAF, SUB_LEAF, REG, BIT>
+{
+    #[inline]
+    fn test_runtime() -> bool {
+        // use intrinsics to check if the feature is supported instead of the is_x86_feature_detected macro
+        // because it does not work well with -Zsanitize options
+        unsafe {
+            let res = match REG {
+                CPUID_REG_EBX => __cpuid_count(LEAF, SUB_LEAF).ebx,
+                CPUID_REG_ECX => __cpuid_count(LEAF, SUB_LEAF).ecx,
+                _ => unreachable!(),
+            };
+            (1 << BIT) & res != 0
+        }
+    }
+}
+
+macro_rules! define_x8664_cpuid {
+    ($name:literal, $leaf:expr, $sub_leaf:expr, $reg:expr, $bit:expr) => {
+        impl EvaluateHardwareFeature for X8664CPUID<$leaf, $sub_leaf, $reg, $bit> {
+            type Name = &'static str;
+
+            #[cfg(target_feature = $name)]
+            type EnabledStatic = B1;
+
+            #[cfg(not(target_feature = $name))]
+            type EnabledStatic = B0;
+
+            type MustCheck = B1;
+
+            fn name() -> Self::Name {
+                $name
+            }
+
+            fn met_runtime() -> bool {
+                Self::test_runtime()
+            }
+        }
+    };
+}
+
+define_x8664_cpuid!("fma", 1, 0, CPUID_REG_ECX, 12);
+
+/// Type alias for FMA feature.
+pub type CpuIdFma = X8664CPUID<1, 0, CPUID_REG_ECX, 12>;
+
+define_x8664_cpuid!("avx2", 7, 0, CPUID_REG_EBX, 5);
+
+/// Type alias for AVX2 feature.
+pub type CpuIdAvx2 = X8664CPUID<7, 0, CPUID_REG_EBX, 5>;
+
+define_x8664_cpuid!("avx512f", 7, 0, CPUID_REG_EBX, 16);
+
+/// Type alias for AVX512F feature.
+pub type CpuIdAvx512f = X8664CPUID<7, 0, CPUID_REG_EBX, 16>;
 
 /// Compute kernel using hand-written AVX2 intrinsics.
 ///
@@ -46,17 +124,21 @@ use super::{
 ///
 /// Note: You MUST compile with `target-feature=+avx2` (or equivalent) to use this kernel, otherwise a very slow
 /// fallback will be emitted by LLVM.
+#[derive(Clone, Copy)]
 pub struct Avx2F32Kernel;
 
 impl Avx2F32Kernel {
     #[inline(always)]
-    pub(crate) fn dct2d_impl(
-        dct_matrix_rmajor: &[f32; 16 * 127],
+    pub(crate) fn dct2d_impl<P: ArrayLength + IsGreaterOrEqual<U8>>(
+        dct_matrix_rmajor: &DefaultPaddedArray<f32, super::DctMatrixNumElements, P>,
         buffer: &GenericArray<GenericArray<f32, U128>, U128>,
+        tmp: &mut GenericArray<f32, U128>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
         let mut out_buffer = Align32([0.0; 8]);
         unsafe {
+            // crate::testing::dump_image("step_by_step/dct2d/avx2/input.ppm", buffer);
+
             let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
             let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
             let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
@@ -91,8 +173,6 @@ impl Avx2F32Kernel {
             }
 
             for k in 0..16 {
-                let mut tmp = [0.0; 128]; // pad one to avoid storing out of bounds
-
                 // vectorize j by 32x8 lanes, unroll inner loop by 8 w.r.t. DCT loading
                 for j_by_8 in (0..128).step_by(8) {
                     let mut sumk = [_mm256_setzero_ps(); 2];
@@ -100,6 +180,7 @@ impl Avx2F32Kernel {
                     let mut k2 = 0;
                     let mut sum_target = true;
 
+                    // it is very important to skip the last iteration as tmp has unknown padding
                     macro_rules! do_loop {
                         (1, $dct_row:expr, $dct_idx:expr) => {
                             let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
@@ -125,7 +206,7 @@ impl Avx2F32Kernel {
                         (8) => {
                             // load one whole row of DCT matrix (i.e. one column of D^t)
                             let dct_row = _mm256_loadu_ps(
-                                dct_matrix_rmajor.as_ptr().add(k * DCT_MATRIX_NCOLS + k2),
+                                dct_matrix_rmajor.as_ptr().add(k * super::DctMatrixNumCols::USIZE + k2),
                             );
                             let mut dct_idx = 0;
                             do_loop!(4, dct_row, dct_idx);
@@ -164,43 +245,41 @@ impl Avx2F32Kernel {
                 }
 
                 for j in 0..16 {
-                    let mut tmp_ptr = tmp.as_ptr();
+                    let tmp_ptr = tmp.as_ptr();
                     let mut sumkh = [_mm256_setzero_ps(); 2];
                     let mut sum_target = true;
+                    let mut j2 = 0;
 
-                    let mut dct_ptr = dct_matrix_rmajor.as_ptr().add(j * DCT_MATRIX_NCOLS);
+                    let dct_ptr = dct_matrix_rmajor
+                        .as_ptr()
+                        .add(j * super::DctMatrixNumCols::USIZE);
 
                     macro_rules! do_loop {
                         (8) => {
-                            sumkh[sum_target as usize] = _mm256_fmadd_ps(
-                                _mm256_loadu_ps(tmp_ptr),
-                                _mm256_loadu_ps(dct_ptr),
-                                sumkh[sum_target as usize],
-                            );
+                            let tmp_row = _mm256_loadu_ps(tmp_ptr.add(j2));
+                            let dct_row = _mm256_loadu_ps(dct_ptr.add(j2));
+                            sumkh[sum_target as usize] =
+                                _mm256_fmadd_ps(tmp_row, dct_row, sumkh[sum_target as usize]);
                         };
                         (16) => {
                             do_loop!(8);
                             sum_target = !sum_target;
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
+                            j2 += 8;
                             do_loop!(8);
                         };
                         (32) => {
                             do_loop!(16);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
+                            j2 += 8;
                             do_loop!(16);
                         };
                         (64) => {
                             do_loop!(32);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
+                            j2 += 8;
                             do_loop!(32);
                         };
                         (128) => {
                             do_loop!(64);
-                            tmp_ptr = tmp_ptr.add(8);
-                            dct_ptr = dct_ptr.add(8);
+                            j2 += 8;
                             do_loop!(64);
                         };
                     }
@@ -209,10 +288,45 @@ impl Avx2F32Kernel {
 
                     let sumkh = _mm256_add_ps(sumkh[0], sumkh[1]);
 
-                    output[k][j] = horizontal!(sum(sumkh)) - (*tmp_ptr.add(7) * *dct_ptr.add(7));
+                    output[k][j] = horizontal!(sum(sumkh));
+
+                    // crate::testing::dump_image(
+                    //     &format!("step_by_step/dct2d/avx2/round/{k}.ppm"),
+                    //     output,
+                    // );
                 }
             }
+            // crate::testing::dump_image("step_by_step/dct2d/avx2/output.ppm", output);
         }
+    }
+}
+
+unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: ArrayLength>(
+    buffer: &GenericArray<GenericArray<f32, U512>, U512>,
+    output: &mut GenericArray<GenericArray<f32, Buffer1WidthX>, Buffer1LengthY>,
+) {
+    unsafe {
+        // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
+        let mut out_buffer = Align32([0.0; 8]);
+
+        for outi in 0..127 {
+            let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
+            for outj in 0..127 {
+                let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
+                let mut sum = _mm256_setzero_ps();
+                for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
+                    let buffer =
+                        _mm256_loadu_ps(buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j));
+                    let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
+                    sum = _mm256_fmadd_ps(buffer, weights, sum);
+                }
+                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                _mm256_store_ps(out_buffer.0.as_mut_ptr(), sum);
+                output[outi][outj] = out_buffer.0[0] + out_buffer.0[4];
+            }
+        }
+        // crate::testing::dump_image("step_by_step/compress/avx2/output.ppm", output);
     }
 }
 
@@ -222,6 +336,12 @@ impl Kernel for Avx2F32Kernel {
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
+    type RequiredHardwareFeature = RequireCompilerTimeHardwareFeature<CpuIdAvx2, CpuIdFma>;
+    type Ident = &'static str;
+
+    fn ident(&self) -> &'static str {
+        "avx2_f32"
+    }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
@@ -229,18 +349,17 @@ impl Kernel for Avx2F32Kernel {
         scaled.min(1.0)
     }
 
-    fn required_hardware_features() -> Option<&'static [&'static str]> {
-        Some(&["avx2", "fma"])
-    }
-
-    #[cfg(all(target_feature = "avx2", target_feature = "fma"))]
-    fn required_hardware_features_met() -> bool {
-        is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
-    }
-
-    #[cfg(not(all(target_feature = "avx2", target_feature = "fma")))]
-    fn required_hardware_features_met() -> bool {
-        false
+    fn jarosz_compress(
+        &mut self,
+        buffer: &GenericArray<GenericArray<f32, Self::InputDimension>, Self::InputDimension>,
+        output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) {
+        unsafe {
+            jarosz_compress_avx2(buffer, output);
+        }
     }
 
     fn sum_of_gradients(
@@ -270,35 +389,6 @@ impl Kernel for Avx2F32Kernel {
         gradient_sum
     }
 
-    fn jarosz_compress(
-        &mut self,
-        buffer: &GenericArray<GenericArray<f32, U512>, U512>,
-        output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
-    ) {
-        unsafe {
-            let mut out_buffer = Align32([0.0; 8]);
-
-            for outi in 0..127 {
-                let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
-                for outj in 0..127 {
-                    let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
-                    let mut sum = _mm256_setzero_ps();
-                    for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
-                        let buffer = _mm256_loadu_ps(
-                            buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j),
-                        );
-                        let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
-                        sum = _mm256_fmadd_ps(buffer, weights, sum);
-                    }
-                    sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
-                    sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
-                    _mm256_store_ps(out_buffer.0.as_mut_ptr(), sum);
-                    output[outi][outj] = out_buffer.0[0] + out_buffer.0[4];
-                }
-            }
-        }
-    }
-
     fn quantize(
         &mut self,
         input: &GenericArray<GenericArray<f32, U16>, U16>,
@@ -306,6 +396,7 @@ impl Kernel for Avx2F32Kernel {
         output: &mut GenericArray<GenericArray<u8, U2>, U16>,
     ) {
         let mut out_buffer = Align32([0.0; 8]);
+        // crate::testing::dump_image("step_by_step/quantize/avx2/input.ppm", input);
         unsafe {
             let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
             let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
@@ -364,7 +455,7 @@ impl Kernel for Avx2F32Kernel {
             // 6 -> (0, 3.984375)
             // 7 -> (0, 1.9921875) at worst off by 1, and with a more educated guess it should be almost impossible to happen
             // 8 -> (0, 0.99609375) perfect thresholding
-            for _ in 0..8 {
+            for _iter in 0..8 {
                 let guess_v = _mm256_set1_ps(guess);
                 let mut resid_gt_count_v = _mm256_setzero_ps();
                 let mut resid_lt_count_v = _mm256_setzero_ps();
@@ -433,6 +524,22 @@ impl Kernel for Avx2F32Kernel {
 
                 do_loop!(32);
 
+                /*
+                crate::testing::dump_thresholding_diagnostic(
+                    &format!("step_by_step/quantize/avx2/iter_{_iter}.ppm"),
+                    input,
+                    |&p: _| {
+                        if p < guess {
+                            Some(false)
+                        } else if p > guess {
+                            Some(true)
+                        } else {
+                            None
+                        }
+                    },
+                );
+                */
+
                 let gt_count = horizontal!(sum(resid_gt_count_v));
                 let lt_count = horizontal!(sum(resid_lt_count_v));
 
@@ -450,6 +557,7 @@ impl Kernel for Avx2F32Kernel {
             }
             *threshold = guess;
         } // unsafe
+        // crate::testing::dump_image("step_by_step/quantize/avx2/output.ppm", output);
     }
 
     // sum of gradients is a pretty auto-vectorizable operation (and benchmark shows the same performance), so we will let it do what it thinks is best for the target architecture
@@ -457,9 +565,10 @@ impl Kernel for Avx2F32Kernel {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        _tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, output);
+        Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, _tmp_row_buffer, output);
     }
 }
 
@@ -467,6 +576,7 @@ impl Kernel for Avx2F32Kernel {
 ///
 /// Benchmark shows it is only slightly faster (~20%) than AVX2 for DCT2D and marginal overall and requires a less common CPU flag+nightly Rust compiler thus feature gated.
 #[cfg(feature = "avx512")]
+#[derive(Clone, Copy)]
 pub struct Avx512F32Kernel;
 
 #[cfg(feature = "avx512")]
@@ -476,19 +586,14 @@ impl Kernel for Avx512F32Kernel {
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
+    type RequiredHardwareFeature = RequireCompilerTimeHardwareFeature<
+        CpuIdAvx512f,
+        <Avx2F32Kernel as Kernel>::RequiredHardwareFeature,
+    >;
+    type Ident = &'static str;
 
-    fn required_hardware_features() -> Option<&'static [&'static str]> {
-        Some(&["avx512f"])
-    }
-
-    #[cfg(all(target_feature = "avx512f"))]
-    fn required_hardware_features_met() -> bool {
-        is_x86_feature_detected!("avx512f")
-    }
-
-    #[cfg(not(all(target_feature = "avx512f")))]
-    fn required_hardware_features_met() -> bool {
-        false
+    fn ident(&self) -> &'static str {
+        "avx512_f32"
     }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
@@ -504,7 +609,9 @@ impl Kernel for Avx512F32Kernel {
     ) {
         // this part requires serious unrolling to overcome suboptimal memory access patterns
         // so we will not vectorize it further
-        Avx2F32Kernel.jarosz_compress(buffer, output);
+        unsafe {
+            jarosz_compress_avx2(buffer, output);
+        }
     }
 
     fn quantize(
@@ -679,12 +786,11 @@ impl Kernel for Avx512F32Kernel {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+        tmp: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
         unsafe {
             for k in 0..16 {
-                let mut tmp = [0.0; 128];
-
                 // vectorize j by 32x16 lanes, unroll inner loop by 16 w.r.t. DCT loading
                 for j_by_16 in (0..128).step_by(16) {
                     let mut sumks = [_mm512_setzero_ps(); 2];
@@ -719,7 +825,9 @@ impl Kernel for Avx512F32Kernel {
                         };
                         (16) => {
                             let dct_row = _mm512_loadu_ps(
-                                DCT_MATRIX_RMAJOR.as_ptr().add(k * DCT_MATRIX_NCOLS + k2),
+                                DCT_MATRIX_RMAJOR
+                                    .as_ptr()
+                                    .add(k * super::DctMatrixNumCols::USIZE + k2),
                             );
                             let mut dct_idx = 0;
                             do_loop!(8, dct_row, dct_idx);
@@ -756,7 +864,9 @@ impl Kernel for Avx512F32Kernel {
                     let mut sumkhs = [_mm512_setzero_ps(); 2];
                     let mut sum_target = true;
 
-                    let mut dct_ptr = DCT_MATRIX_RMAJOR.as_ptr().add(j * DCT_MATRIX_NCOLS);
+                    let mut dct_ptr = DCT_MATRIX_RMAJOR
+                        .as_ptr()
+                        .add(j * super::DctMatrixNumCols::USIZE);
 
                     macro_rules! do_loop {
                         (16) => {

@@ -2,6 +2,10 @@
 
 A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm that prioritizes throughput over precision.
 
+## Pipeline Overview
+
+![Pipeline Overview](pipeline_overview.png)
+
 ## Design Goals
 
 Be _accurate enough_ for high-throughput screening. At present, the official docs require 10 bits when quality > 0.8 to be considered "correct" and we are currently right on the border (see [Accuracy on test set](#accuracy-on-test-set)). However the threshold for matching is 31 bits so we consider this not important for the purpose of matching.
@@ -24,19 +28,19 @@ Prerequisites:
 
 Compilation for your own CPU (AVX2 if available, falls back to an auto-vectorized scalar kernel) is done usually with:
 
-```
+```bash
 RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features "cli"
 ```
 
 If you want a generic binary that only assumes AVX2 and FMA is available to use the optimized kernel, you can build with:
 
-```
+```bash
 RUSTFLAGS="-Ctarget-feature=+avx2,+fma" cargo build --release --features "cli"
 ```
 
 If your CPU has AVX512, you can also try (with a Rust nightly compiler):
 
-```
+```bash
 RUSTFLAGS="-Ctarget-cpu=native" cargo +nightly build --release --features "cli avx512"
 RUSTFLAGS="-Ctarget-feature=+avx512f" cargo +nightly build --release --features "cli avx512"
 ```
@@ -45,6 +49,23 @@ and see if it is faster, it may not be, especially with older generations of AVX
 
 
 See [binary_usage.md](binary_usage.md) or the CLI help menu for details and practical examples.
+
+## Python usage
+
+See [integration/python.py](integration/python.py) for an example of how to use this library from Python.
+
+```py
+python integration/hash.py test-data/aaa-orig.jpg                                                                               09:42:59
+Image: test-data/aaa-orig.jpg
+Quality: 1.000
+Threshold: 12.554
+Hash: 58f8f0cee0f4a84f06370a32038f67f0b36e2ed596621e1d33e6b39c4e9c9b22
+Starting 1000 iterations
+Finished 1000 iterations
+Average Time taken: 6628.865 us
+Average conversion time: 6546.036 us
+Average hash time: 80.998 us
+```
 
 ## Benchmark
 

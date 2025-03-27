@@ -137,29 +137,3 @@ const fn swap_anti_diagonal<N: Copy, const START_I: usize, L: ArrayLength>(
 
     do_loop!(16);
 }
-
-/// Flip the 2D array diagonally (i.e. mirroring on the top-left to bottom-right axis, a dihedral flip using [[0, 1], [1, 0]]).
-///
-/// This function is generic up to 32x32
-pub const fn diagflip<N: Copy, L: ArrayLength>(output: &mut GenericArray<GenericArray<N, L>, L>)
-where
-    L: IsLessOrEqual<U32>,
-{
-    macro_rules! do_loop {
-        ($msb:literal * 8 + [$($lsb:literal),*] $(,)?) => {
-            $(
-                if 8 * $msb + $lsb >= L::USIZE {
-                    return;
-                }
-                swap_anti_diagonal::<N, { 8 * $msb + $lsb }, L>(output);
-            )*
-        };
-        ([$($msb:literal),*] * 8) => {
-            $(
-                do_loop!($msb * 8 + [0, 1, 2, 3, 4, 5, 6, 7]);
-            )*
-        };
-    }
-
-    do_loop!([0, 1, 2, 3] * 8);
-}

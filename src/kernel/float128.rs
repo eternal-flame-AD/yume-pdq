@@ -20,9 +20,8 @@
  */
 
 use core::{
-    cmp::Ordering, fmt::Display,ops::{Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign}
+    cmp::Ordering, fmt::Display,ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign}
 };
-use derive_more::{Add, AddAssign, Sub, SubAssign};
 use num_traits::{float::TotalOrder, Bounded, FromPrimitive, Num, NumCast, One, ToPrimitive};
 use rug::Assign;
 
@@ -30,10 +29,6 @@ use rug::Assign;
 #[derive(
     Debug,
     Clone,
-    Add,
-    AddAssign,
-    Sub,
-    SubAssign,
     PartialEq,
     PartialOrd,
 )]
@@ -45,6 +40,33 @@ impl<const C: u32> TotalOrder for ArbFloat<C> {
         self.0.total_cmp(&other.0)
     }
 }
+
+impl<const C: u32> Add<ArbFloat<C>> for ArbFloat<C> {
+    type Output = Self;
+    fn add(self, rhs: ArbFloat<C>) -> Self::Output {
+        Self(self.0.clone() + rhs.0)
+    }
+}
+
+impl<const C: u32> AddAssign<ArbFloat<C>> for ArbFloat<C> {
+    fn add_assign(&mut self, rhs: ArbFloat<C>) {
+        self.0 += rhs.0;
+    }
+}
+
+impl<const C: u32> Sub<ArbFloat<C>> for ArbFloat<C> {
+    type Output = Self;
+    fn sub(self, rhs: ArbFloat<C>) -> Self::Output {
+        Self(self.0.clone() - rhs.0)
+    }
+}
+
+impl<const C: u32> SubAssign<ArbFloat<C>> for ArbFloat<C> {
+    fn sub_assign(&mut self, rhs: ArbFloat<C>) {
+        self.0 -= rhs.0;
+    }
+}
+
 
 impl<const C: u32> NumCast for ArbFloat<C> {
     fn from<T: ToPrimitive>(n: T) -> Option<Self> {

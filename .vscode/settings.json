@@ -4,6 +4,8 @@
         "std",
         "reference-rug",
         "cli",
+        "unstable",
+        "ffi"
     ],
     "psi-header.config": {
         "license": "Custom"

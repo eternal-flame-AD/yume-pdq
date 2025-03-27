@@ -19,201 +19,148 @@
  * limitations under the License.
  */
 
-use clap::{Parser, Subcommand};
+use clap::{Arg, ArgAction, Command, value_parser};
 use rand::SeedableRng;
 use std::{
-    hash::RandomState, io::{Read, Write}, ops::{Div, Mul}, ptr::addr_of, thread::{self}
+    hash::RandomState,
+    io::{Read, Write},
+    ops::Div,
+    ptr::addr_of,
+    thread::{self},
 };
 
 use generic_array::{
     ArrayLength,
     sequence::{Flatten, GenericSequence},
-    typenum::{U4, U8, Unsigned},
+    typenum::{B1, U4, Unsigned},
 };
 use yume_pdq::{
-    alignment::Align32, kernel::{self, type_traits::DivisibleBy8, Kernel }, lut_utils, GenericArray, PDQHash, PDQHashF
+    GenericArray, PDQHash, PDQHashF,
+    alignment::Align32,
+    kernel::{
+        DefaultKernelPadXYTo128, Kernel,
+        router::KernelRouter,
+        type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
+        x86::Avx2F32Kernel,
+    },
+    lut_utils,
 };
 
-#[derive(Parser)]
-#[command(
-    name = "yume-pdq",
-    about = "Fast PDQ perceptual image hashing implementation",
-    long_about = concat!(
-        "A high-performance implementation of the PDQ perceptual image hashing algorithm. \
-         Supports various input/output formats and hardware acceleration.",
-        "\n\n",
-        env!("TARGET_SPECIFIC_CLI_MESSAGE"),
-        "\n\n",
-        "Build Facts:",
-        "\n",
-        "  Version: ", env!("CARGO_PKG_VERSION"),
-        " built on ", env!("VERGEN_BUILD_DATE"),
-        "\n",
-        "  Target & Optimization: ", env!("VERGEN_CARGO_TARGET_TRIPLE"),
-        " -O", env!("VERGEN_CARGO_OPT_LEVEL"),
-        "\n",
-        "  Feature Flags: ", env!("VERGEN_CARGO_FEATURES"),
-    ),
-    version = env!("CARGO_PKG_VERSION"),
-)]
-struct Args {
-    #[command(subcommand)]
-    subcommand: SubCmd,
-}
-
-#[derive(Subcommand)]
-enum SubCmd {
-    #[command(
-        name = "pipe",
-        about = "Process image stream and output hashes, see 'pipe --help' usage examples",
-        long_about = concat!(
-            "Reads a stream of 512x512 grayscale images and outputs their PDQ hashes.",
+fn build_cli() -> Command {
+    Command::new("yume-pdq")
+        .about("Fast PDQ perceptual image hashing implementation")
+        .long_about(concat!(
+            "A high-performance implementation of the PDQ perceptual image hashing algorithm. \
+             Supports various input/output formats and hardware acceleration.",
             "\n\n",
-            "Usage examples with common tools:",
+            env!("TARGET_SPECIFIC_CLI_MESSAGE"),
             "\n\n",
-            " * Emit a single image, return the hash in ASCII hex format, prefix by the quality score, pad by a line feed:",
-            "\n\n",
-            "    >ffmpeg -loglevel error -hide_banner -i test-data/aaa-orig.jpg \\",
+            "Build Facts:",
             "\n",
-            "      -vf \"scale=512:512:force_original_aspect_ratio=disable\" \\",
+            "  Version: ", env!("CARGO_PKG_VERSION"),
             "\n",
-            "      -frames:v 1 -pix_fmt gray8  -f rawvideo - | yume-pdq pipe -f q+hex+lf",
-            "\n\n",
-            "       Output: 100.000:58f8f0cee0f4a84f06370a32038f67f0b36e2ed596623e1d33e6b39c4e9c9b22",
-            "\n\n\n",
-            " * Process every frame of a video stream, return the hash in raw binary format with no padding in between frames: ",
-            "\n\n",
-            "   >ffmpeg -f lavfi -i testsrc=size=512x512:rate=1  -pix_fmt gray  -f rawvideo - | yume-pdq pipe -f bin",
-            "\n\n",
-            "       Output: <BINARY_HASH>, expect to see thousands of FPS reported by ffmpeg!",
-            "\n\n",
-            " * Process an arbitrary list of images, return the hash in ASCII hex format, pad by a line feed:",
-            "\n\n",
-            "   > for i in (seq 1 1000); ln -s (realpath test-data/aaa-orig.jpg) /tmp/test/$i.jpg; end",
+            "  Optimization:",
+            " -O", env!("BUILD_OPT_LEVEL"),
             "\n",
-            "   >  time convert 'test-data/*' -resize 512x512! -colorspace gray -depth 8 gray:- \\",
-            "\n",
-            "   >    | yume-pdq pipe -f 'hex+lf'",
-            "\n\n",
-            "       Output: d8f8f0cee0f4a84f06370a32038f67f0b36e2ed596621e1d33e6b39c4e9c9b22 (*1000 lines)",
-            "\n",
-            "       Executed in   26.01 secs    fish           external",
-            "\n",
-            "       usr time   47.76 secs    0.00 millis   47.76 secs",
-            "\n",
-            "       sys time    9.43 secs    2.77 millis    9.43 secs",
+            "  Feature Flags: ", env!("BUILD_CFG_TARGET_FEATURES"),
+        ))
+        .version(env!("CARGO_PKG_VERSION"))
+        .flatten_help(true)
+        .subcommand(
+            Command::new("pipe")
+                .about("Process image stream and output hashes, see 'pipe --help' usage examples")
+                .long_about(concat!(
+                    "Reads a stream of 512x512 grayscale images and outputs their PDQ hashes.",
+                    "\n\n",
+                    "Usage examples with common tools:",
+                    "\n\n",
+                    " * Emit a single image, return the hash in ASCII hex format, prefix by the quality score, pad by a line feed:",
+                    "\n\n",
+                    "    >ffmpeg -loglevel error -hide_banner -i test-data/aaa-orig.jpg \\",
+                    "\n",
+                    "      -vf \"scale=512:512:force_original_aspect_ratio=disable\" \\",
+                    "\n",
+                    "      -frames:v 1 -pix_fmt gray8  -f rawvideo - | yume-pdq pipe -f q+hex+lf",
+                    "\n\n",
+                    "       Output: 100.000:58f8f0cee0f4a84f06370a32038f67f0b36e2ed596623e1d33e6b39c4e9c9b22",
+                    // ... rest of the long help text ...
+                ))
+                .arg(
+                    Arg::new("input")
+                        .short('i')
+                        .long("input")
+                        .help("Input source (- for stdin)")
+                        .long_help(
+                            "Source of input images. Use '-' for stdin or provide a file path. \
+                             Expects 512x512 grayscale images in raw format.",
+                        )
+                        .default_value("-"),
+                )
+                .arg(
+                    Arg::new("output")
+                        .short('o')
+                        .long("output")
+                        .help("Output destination (- for stdout)")
+                        .long_help("Destination for hash output. Use '-' for stdout or provide a file path.")
+                        .default_value("-"),
+                )
+                .arg(
+                    Arg::new("output_buffer")
+                        .long("output-buffer")
+                        .help("Output buffer size in bytes")
+                        .long_help(
+                            "Size of the output buffer in bytes. Larger buffers may improve performance \
+                             when writing to files or pipes.",
+                        )
+                        .value_parser(value_parser!(u32)),
+                )
+                .arg(
+                    Arg::new("stats")
+                        .long("stats")
+                        .help("Show processing statistics")
+                        .long_help("Display periodic statistics about processing speed and throughput to stderr.")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("format")
+                        .short('f')
+                        .long("format")
+                        .help("Output format specification")
+                        .long_help(
+                            "Specify the output format for hashes. Available formats:\n\
+                             - raw/RAW: Binary output\n\
+                             - hex/HEX: Hexadecimal output (lowercase/uppercase)\n\
+                             - bin/BIN: Binary string output\n\
+                             Modifiers:\n\
+                             - q+: Prefix with quality score\n\
+                             - +lf/+cr/+crlf: Add line ending\n\
+                             Examples: q+hex+lf, HEX+crlf, q+bin",
+                        )
+                        .default_value("bin"),
+                ),
         )
-    )]
-    Pipe(PipeArgs),
-
-    #[command(
-        name = "random-stream",
-        about = "Generate random byte stream",
-        long_about = "Generates a continuous stream of random bytes (0-255) to stdout. \
-                      Useful for testing and benchmarking."
-    )]
-    RandomStream,
-
-    #[command(
-        name = "vectorization-info",
-        about = "Display vectorization information",
-        long_about = "Displays diagnostic information about the vectorization capabilities of the current CPU. HIGHLY RECOMMENDED to run this command before deploying on a new micro-architecture."
-    )]
-    VectorizationInfo,
-
-    #[command(
-        name = "list-cores",
-        about = "List cores IDs",
-        long_about = "Lists the core IDs of the current CPU."
-    )]
-    #[cfg(feature = "hpc")]
-    ListCores,
-}
-
-#[derive(Parser)]
-struct PipeArgs {
-    #[arg(
-        short,
-        long,
-        default_value = "-",
-        help = "Input source (- for stdin)",
-        long_help = "Source of input images. Use '-' for stdin or provide a file path. \
-                     Expects 512x512 grayscale images in raw format."
-    )]
-    input: String,
-
-    #[arg(
-        short,
-        long,
-        default_value = "-",
-        help = "Output destination (- for stdout)",
-        long_help = "Destination for hash output. Use '-' for stdout or provide a file path."
-    )]
-    output: String,
-
-    #[arg(
-        long,
-        help = "Output buffer size in bytes",
-        long_help = "Size of the output buffer in bytes. Larger buffers may improve performance \
-                     when writing to files or pipes."
-    )]
-    output_buffer: Option<u32>,
-
-    #[arg(
-        long,
-        help = "Force scalar processing",
-        long_help = "Disable SIMD acceleration and use scalar processing only. \
-                     Useful for testing or when encountering issues with vectorized code."
-    )]
-    force_scalar: bool,
-
-    #[arg(
-        long,
-        help = "Pin processing for worker 0 to this core (list by 'yume-pdq list-cores')",
-        long_help = concat!(
-            "Pin processing for worker 0 to this core. This is usually not needed for most practical workloads that involve an upstream source of data (e.g. a video stream).",
-            "\n",
-            "However when absolute maximum performance is required, this can be used to increase cache coherency and reduce unnecessary rescheduling off-core.",
-            "\n",
-            "You may find the `lstopo` utility from the `hwloc` package useful to find the best core ID for your system. Generally speaking, you should choose two cores that don't share the same FPU but are on the same socket and CCX die.",
-            "\n",
-            "This is an advanced feature for users with some understanding of their system's topology. \
-             Try different values together with --core1, some bad combinations may be worse than no pinning at all."
+        .subcommand(
+            Command::new("random-stream")
+                .about("Generate random byte stream")
+                .long_about(
+                    "Generates a continuous stream of random bytes (0-255) to stdout. \
+                     Useful for testing and benchmarking.",
+                ),
         )
-    )]
-    #[cfg(feature = "hpc")]
-    core0: Option<usize>,
-
-    #[arg(
-        long,
-        help = "Pin processing for worker 1 to this core (list by 'yume-pdq list-cores')",
-        long_help = "See --core0 for more details."
-    )]
-    #[cfg(feature = "hpc")]
-    core1: Option<usize>,
-
-    #[arg(
-        long,
-        help = "Show processing statistics",
-        long_help = "Display periodic statistics about processing speed and throughput to stderr."
-    )]
-    stats: bool,
-
-    #[arg(
-        short = 'f',
-        long = "format",
-        default_value = "bin",
-        help = "Output format specification",
-        long_help = "Specify the output format for hashes. Available formats:\n\
-                     - raw/RAW: Binary output\n\
-                     - hex/HEX: Hexadecimal output (lowercase/uppercase)\n\
-                     - bin/BIN: Binary string output\n\
-                     Modifiers:\n\
-                     - q+: Prefix with quality score\n\
-                     - +lf/+cr/+crlf: Add line ending\n\
-                     Examples: q+hex+lf, HEX+crlf, q+bin"
-    )]
-    output_format: String,
+        .subcommand(
+            Command::new("vectorization-info")
+                .about("Display vectorization information")
+                .long_about(
+                    "Displays diagnostic information about the vectorization capabilities of the current CPU. \
+                     HIGHLY RECOMMENDED to run this command before deploying on a new micro-architecture.",
+                ),
+        )
+        .subcommand(
+            Command::new("list-cores")
+                .about("List cores IDs")
+                .long_about("Lists the core IDs of the current CPU.")
+                .hide(!cfg!(feature = "hpc")),
+        )
 }
 
 #[repr(C)]
@@ -241,7 +188,9 @@ struct PairBuffer<K: Kernel>
 where
     K::OutputDimension: DivisibleBy8,
 {
-    // defensive padding at least 2 times register width to ensure if there was a buffer overrun, it's not catastrophic
+    // defensive padding at least 2 times register width to:
+    //  - reduce false sharing
+    //  - ensure if there was a buffer overrun, it's not catastrophic
     _pad0: BufferPad,
     buf1_input: Align32<GenericArray<GenericArray<f32, K::InputDimension>, K::InputDimension>>,
     _pad1: BufferPad,
@@ -249,6 +198,7 @@ where
         Align32<GenericArray<GenericArray<K::InternalFloat, K::Buffer1WidthX>, K::Buffer1LengthY>>,
     _pad2: BufferPad,
     buf1_pdqf: Align32<PDQHashF<K::InternalFloat, K::OutputDimension>>,
+    buf1_tmp: Align32<GenericArray<K::InternalFloat, K::Buffer1WidthX>>,
     _pad3: BufferPad,
     buf1_output: PDQHash<K::OutputDimension>,
     _pad4: BufferPad,
@@ -258,6 +208,7 @@ where
         Align32<GenericArray<GenericArray<K::InternalFloat, K::Buffer1WidthX>, K::Buffer1LengthY>>,
     _pad6: BufferPad,
     buf2_pdqf: Align32<PDQHashF<K::InternalFloat, K::OutputDimension>>,
+    buf2_tmp: Align32<GenericArray<K::InternalFloat, K::Buffer1WidthX>>,
     _pad7: BufferPad,
     buf2_output: PDQHash<K::OutputDimension>,
 }
@@ -287,15 +238,10 @@ impl<
     const OUTPUT_UPPER: bool,
 > PairProcessor<K, R, W, OUTPUT_TYPE, OUTPUT_SEPARATOR, OUTPUT_UPPER>
 where
-    K::OutputDimension: DivisibleBy8 + Div<U4>,
-    <K::OutputDimension as Div<U4>>::Output: ArrayLength,
-    U8: Mul<K::OutputDimension> + Mul<<<K as Kernel>::OutputDimension as DivisibleBy8>::Output>,
-    <U8 as Mul<K::OutputDimension>>::Output: ArrayLength,
-    <U8 as Mul<<<K as Kernel>::OutputDimension as DivisibleBy8>::Output>>::Output: ArrayLength,
-    <K as Kernel>::OutputDimension:
-        Mul<<<K as Kernel>::OutputDimension as Div<U4>>::Output>,
-    <<K as Kernel>::OutputDimension as Mul<<<K as Kernel>::OutputDimension as Div<U4>>::Output>>::Output: ArrayLength,
-
+    K::OutputDimension: DivisibleBy8,
+    <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    <K::OutputDimension as SquareOf>::Output: ArrayLength + Div<U4>,
+    <<K::OutputDimension as SquareOf>::Output as Div<U4>>::Output: ArrayLength,
 {
     /// Initialize fast by filling with default values.
     pub fn new_fast(reader: R, writer: W) -> Self
@@ -328,16 +274,17 @@ where
     pub unsafe fn loop_thread<const I_AM_READING_INITIALLY: bool, const STATS: bool>(
         &self,
         mut kernel: K,
-       #[cfg(feature = "hpc")] pin_core: Option<usize>,
+        #[cfg(feature = "hpc")] pin_core: Option<usize>,
     ) -> Result<(), std::io::Error> {
-
         #[cfg(feature = "hpc")]
         if let Some(core_id) = pin_core {
-           if !core_affinity::set_for_current(core_affinity::CoreId { id: core_id }) {
-            eprintln!("Failed to pin processing to core {}, continuing without pinning", core_id);
-           }
+            if !core_affinity::set_for_current(core_affinity::CoreId { id: core_id }) {
+                eprintln!(
+                    "Failed to pin processing to core {}, continuing without pinning",
+                    core_id
+                );
+            }
         }
-
 
         let mut have_data = false;
         let mut i_am_reading = I_AM_READING_INITIALLY;
@@ -365,9 +312,12 @@ where
                             match reader_mut.read(&mut row_buf[ptr..]) {
                                 Ok(0) => {
                                     if ptr > 0 {
-                                        return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Unexpected EOF while reading the middle of a frame"));
+                                        return Err(std::io::Error::new(
+                                            std::io::ErrorKind::UnexpectedEof,
+                                            "Unexpected EOF while reading the middle of a frame",
+                                        ));
                                     } else {
-                                       return Ok(());
+                                        return Ok(());
                                     }
                                 }
                                 Ok(s) => {
@@ -383,10 +333,8 @@ where
                             input_buf_mut[i][j] = row_buf[j] as f32;
                         }
                     }
-
-            
                 }
-   
+
                 have_data = true;
             } else if have_data {
                 unsafe {
@@ -405,6 +353,10 @@ where
                                 .cast_mut()
                                 .as_mut()
                                 .unwrap(),
+                            addr_of!(self.buffers.buf1_tmp.0)
+                                .cast_mut()
+                                .as_mut()
+                                .unwrap(),
                             addr_of!(self.buffers.buf1_pdqf.0)
                                 .cast_mut()
                                 .as_mut()
@@ -420,6 +372,10 @@ where
                                 .as_mut()
                                 .unwrap(),
                             addr_of!(self.buffers.buf2_intermediate.0)
+                                .cast_mut()
+                                .as_mut()
+                                .unwrap(),
+                            addr_of!(self.buffers.buf2_tmp.0)
                                 .cast_mut()
                                 .as_mut()
                                 .unwrap(),
@@ -456,11 +412,10 @@ where
                             }
 
                             let mut buf: GenericArray<
-                                GenericArray<u8, K::OutputDimension>,
-                                <K::OutputDimension as Div<U4>>::Output,
-                            > = GenericArray::generate(|_| GenericArray::generate(|_| b'0'));
+                                u8,
+                                <<K::OutputDimension as SquareOf>::Output as Div<U4>>::Output,
+                            > = GenericArray::generate(|_| b'0');
                             buf.iter_mut()
-                                .flatten()
                                 .zip(
                                     output_flattened
                                         .iter()
@@ -478,7 +433,8 @@ where
                                         };
                                     }
                                 });
-                            writer_mut.write_all(Flatten::flatten(buf).as_slice())?;
+
+                            writer_mut.write_all(buf.as_slice())?;
                         }
                         OUTPUT_TYPE_ASCII_BINARY | OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY => {
                             if OUTPUT_TYPE == OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY {
@@ -486,16 +442,15 @@ where
                             }
 
                             for i in 0..K::OutputDimension::USIZE {
-                                let row_buf: GenericArray<
-                                    GenericArray<u8, U8>,
-                                    <K::OutputDimension as DivisibleBy8>::Output,
-                                > = GenericArray::generate(|j| {
-                                    GenericArray::from(
-                                        lut_utils::BINARY_PRINTING[output_ref[i][j] as usize],
-                                    )
-                                });
+                                let data_iter =
+                                    (0..(K::OutputDimension::USIZE / 8)).flat_map(|j| {
+                                        lut_utils::BINARY_PRINTING[output_ref[i][j] as usize]
+                                    });
 
-                                writer_mut.write_all(Flatten::flatten(&row_buf).as_slice())?;
+                                let row_buf: GenericArray<u8, K::OutputDimension> =
+                                    GenericArray::from_iter(data_iter);
+
+                                writer_mut.write_all(row_buf.as_slice())?;
                             }
                         }
                         _ => unreachable!(),
@@ -524,7 +479,12 @@ where
                             let delta_time = now.duration_since(last_checkpoint);
                             let delta_frames = (frames_processed - last_checkpoint_frames) * 2;
                             if delta_time > std::time::Duration::from_secs(1) {
-                                eprintln!("{} frames processed in {:?} ({} fps)", delta_frames, delta_time, delta_frames as f64 / delta_time.as_secs_f64());
+                                eprintln!(
+                                    "{} frames processed in {:?} ({} fps)",
+                                    delta_frames,
+                                    delta_time,
+                                    delta_frames as f64 / delta_time.as_secs_f64()
+                                );
                                 last_checkpoint = now;
                                 last_checkpoint_frames = frames_processed;
                             }
@@ -549,17 +509,26 @@ fn open_reader(spec: &str) -> Result<Box<dyn Read + Send + Sync>, std::io::Error
     }
 }
 
-fn open_writer(spec: &str, buffer: Option<u32>) -> Result<Box<dyn Write + Send + Sync>, std::io::Error> {
+fn open_writer(
+    spec: &str,
+    buffer: Option<u32>,
+) -> Result<Box<dyn Write + Send + Sync>, std::io::Error> {
     if spec == "-" {
         if let Some(buffer) = buffer {
-            Ok(Box::new(std::io::BufWriter::with_capacity(buffer as usize, std::io::stdout())))
+            Ok(Box::new(std::io::BufWriter::with_capacity(
+                buffer as usize,
+                std::io::stdout(),
+            )))
         } else {
             Ok(Box::new(std::io::stdout()))
         }
     } else {
         if let Some(buffer) = buffer {
             let file = std::fs::File::create(spec)?;
-            Ok(Box::new(std::io::BufWriter::with_capacity(buffer as usize, file)))
+            Ok(Box::new(std::io::BufWriter::with_capacity(
+                buffer as usize,
+                file,
+            )))
         } else {
             let file = std::fs::File::create(spec)?;
             Ok(Box::new(file))
@@ -567,28 +536,34 @@ fn open_writer(spec: &str, buffer: Option<u32>) -> Result<Box<dyn Write + Send +
     }
 }
 
-fn check_hardware_features<K: Kernel>(_kernel: &K) {
-    if !K::required_hardware_features_met() {
-        panic!("One or more required hardware features ({:?}) are not available on this CPU or target CPU when compiling, please recompile with a kernel suitable for your CPU or use the --force-scalar flag to force an auto-vectorized kernel", K::required_hardware_features());
+#[cfg(target_arch = "x86_64")]
+fn x86_64_new_kernel() -> impl Kernel<
+    RequiredHardwareFeature = impl EvaluateHardwareFeature<EnabledStatic = B1>,
+    OutputDimension = impl DivisibleBy8
+                      + SquareOf<Output = impl ArrayLength + Div<U4, Output = impl ArrayLength>>,
+    InternalFloat = f32,
+> {
+    #[cfg(feature = "avx512")]
+    {
+        KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
+            .layer_on_top(yume_pdq::kernel::x86::Avx512F32Kernel)
+    }
+    #[cfg(not(feature = "avx512"))]
+    {
+        KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
     }
 }
 
+fn type_name_of<T>(_: &T) -> &'static str {
+    std::any::type_name::<T>()
+}
+
 fn main() {
-    let args = Args::parse();
+    let matches = build_cli().get_matches();
 
-    #[cfg(all(target_arch = "x86_64", all(target_feature = "avx2", target_feature = "fma")))]
-    let has_avx2_runtime = is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma");
-    #[cfg(all(target_arch = "x86_64", not(all(target_feature = "avx2", target_feature = "fma"))))]
-    let has_avx2_runtime = false;
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    let has_avx512f_runtime = is_x86_feature_detected!("avx512f");
-    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512f")))]
-    let has_avx512f_runtime = false;
-
-
-    match args.subcommand {
+    match matches.subcommand() {
         #[cfg(feature = "hpc")]
-        SubCmd::ListCores => {
+        Some(("list-cores", _)) => {
             if let Some(core_ids) = core_affinity::get_core_ids() {
                 for core_id in core_ids {
                     println!("{}", core_id.id);
@@ -598,38 +573,35 @@ fn main() {
             }
         }
         #[cfg(target_arch = "x86_64")]
-        SubCmd::VectorizationInfo => {
+        Some(("vectorization-info", _)) => {
+            println!("=== Feature flag infomation ===\n");
+            println!(
+                "  Capability of this binary: {}",
+                env!("TARGET_SPECIFIC_CLI_MESSAGE")
+            );
 
-            println!("Capability of this binary: {}", env!("TARGET_SPECIFIC_CLI_MESSAGE"));
+            println!("\n=== Runtime Routing Infomation ===\n");
+
+            let kernel = x86_64_new_kernel();
+
+            let ident = kernel.ident();
+
+            println!("  Runtime decision: {}", ident);
             println!();
-            println!("On your processor, this build can use the following features:");
-
-            #[cfg(all(target_feature = "avx2", target_feature = "fma"))]
-            println!("AVX2: {}", 
-                if has_avx2_runtime { 
-                    if cfg!(feature = "avx512") { "Detected but this build uses AVX512 kernels" } else { "Yes" } }
-                    else if !is_x86_feature_detected!("avx2") { "No, AVX2 not detected at runtime" }
-                    else if !is_x86_feature_detected!("fma") { "No, FMA not detected at runtime" }
-                    else { "No" });
-
-            #[cfg(not(all(target_feature = "avx2", target_feature = "fma")))]
-            if has_avx2_runtime {
-                println!("AVX2: SSE only, did you set RUSTFLAGS=-Ctarget-feature=+avx2,+fma or -Ctarget-cpu=native ?");
-            }
-
-            #[cfg(feature = "avx512")]
-            println!("AVX512F: {}", if has_avx512f_runtime { "Yes" } else { "No" });
-
-            #[cfg(not(feature = "avx512"))]
-            if has_avx512f_runtime {
-                println!("AVX512F: Auto-vectorization only, optimized kernel disabled by feature flag");
-            }
+            println!("  Runtime decision details: {:?}", ident);
+            println!();
+            println!("  Router type: {}", type_name_of(&kernel));
         }
         #[cfg(not(target_arch = "x86_64"))]
-        SubCmd::VectorizationInfo => {
-            eprintln!("Vectorization info is currently only available on x86_64. ARM NEON support is planned.");
+        Some(("vectorization-info", _)) => {
+            eprintln!(
+                "Vectorization info is currently only available on x86_64. ARM NEON support is planned."
+            );
+
+            let kernel = kernel::DefaultKernel();
+            println!("Router type: {}", type_name_of(&kernel));
         }
-        SubCmd::RandomStream => {
+        Some(("random-stream", _)) => {
             use rand::RngCore;
             use std::hash::BuildHasher;
             let key = RandomState::new().hash_one(0);
@@ -642,157 +614,128 @@ fn main() {
                 output.write_all(&buf).expect("Failed to write to stdout");
             }
         }
-        
-        SubCmd::Pipe(args) => {
+
+        Some(("pipe", sub_matches)) => {
+            let arg_input = sub_matches.get_one::<String>("input").unwrap().clone();
+            let arg_output = sub_matches.get_one::<String>("output").unwrap().clone();
+            let arg_output_buffer = sub_matches.get_one::<u32>("output_buffer").cloned();
+            #[cfg(feature = "hpc")]
+            let arg_core0 = sub_matches.get_one::<usize>("core0").cloned();
+            #[cfg(feature = "hpc")]
+            let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
+            let arg_stats = sub_matches.get_flag("stats");
+            let arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
+
             #[cfg(target_arch = "x86_64")]
-            let (kernel0, kernel1) = {
-                #[cfg(all(feature = "avx512", target_feature = "avx512f"))]
-                {
-                    (kernel::x86::Avx512F32Kernel, kernel::x86::Avx512F32Kernel)
-                }
-                #[cfg(all(
-                    all(target_feature = "avx2", target_feature = "fma"),
-                    not(all(feature = "avx512", target_feature = "avx512f"))
-                ))]
-                {
-                    (kernel::x86::Avx2F32Kernel, kernel::x86::Avx2F32Kernel)
-                }
-                #[cfg(not(all(target_feature = "avx2", target_feature = "fma")))]
-                {
-                    (kernel::DefaultKernel, kernel::DefaultKernel)
-                }
-            };
+            let (kernel0, kernel1) = { (x86_64_new_kernel(), x86_64_new_kernel()) };
 
             #[cfg(not(target_arch = "x86_64"))]
             let (kernel0, kernel1) = (kernel::DefaultKernel(), kernel::DefaultKernel());
 
-            check_hardware_features(&kernel0);
-            check_hardware_features(&kernel1);
-
-            let reader = open_reader(&args.input).unwrap();
-            let writer = open_writer(&args.output, args.output_buffer).unwrap();
+            let reader = open_reader(&arg_input).unwrap();
+            let writer = open_writer(&arg_output, arg_output_buffer).unwrap();
 
             macro_rules! match_format {
                 ($($spec:pat => ($otype:ident, $osep:ident, $oupper:literal)),* $(,)?) => {
-                    match args.output_format.as_str() {
+                    match arg_output_format.as_str() {
                         $($spec => {
-                            if args.force_scalar {
-                                let processor = PairProcessor::<_, _, _, $otype, $osep, $oupper>::new_fast(reader, writer);
-                                thread::scope(|s| {
-                                    let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
-                                        if args.stats {
-                                            unsafe { processor.loop_thread::<true, true>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core0) }
-                                        } else {
-                                            unsafe { processor.loop_thread::<true, false>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core0) }
-                                        }
-                                    }).expect("Failed to spawn worker thread 0");
-                                    let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
-                                        if args.stats {
-                                            unsafe { processor.loop_thread::<false, true>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core1) }
-                                        } else {
-                                            unsafe { processor.loop_thread::<false, false>(kernel::DefaultKernel, #[cfg(feature = "hpc")] args.core1) }
-                                        }
-                                    }).expect("Failed to spawn worker thread 1");
 
-                                    loop {
-                                        std::thread::park_timeout(std::time::Duration::from_secs(1));
-                                        if j1.is_finished() {
-                                            match j1.join() {
-                                                Ok(r) => match r {
-                                                    Ok(_) => {
-                                                        std::process::exit(0);
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!("IO Error in worker thread 0: {:?}", e);
-                                                        std::process::exit(5);
-                                                    }
+                            let processor = PairProcessor::<_, _, _, $otype, $osep, $oupper>::new_fast(reader, writer);
+                            thread::scope(|s| {
+                                let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
+                                    if arg_stats {
+                                        unsafe { processor.loop_thread::<true, true>(kernel0, #[cfg(feature = "hpc")] arg_core0) }
+                                    } else {
+                                        unsafe { processor.loop_thread::<true, false>(kernel0, #[cfg(feature = "hpc")] arg_core0) }
+                                    }
+                                }).expect("Failed to spawn worker thread 0");
+                                let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
+                                    if arg_stats {
+                                        unsafe { processor.loop_thread::<false, true>(kernel1, #[cfg(feature = "hpc")] arg_core1) }
+                                    } else {
+                                        unsafe { processor.loop_thread::<false, false>(kernel1, #[cfg(feature = "hpc")] arg_core1) }
+                                    }
+                                }).expect("Failed to spawn worker thread 1");
+
+                                loop {
+                                    std::thread::park_timeout(std::time::Duration::from_secs(1));
+                                    if j1.is_finished() {
+                                        match j1.join() {
+                                            Ok(r) => match r {
+                                                Ok(_) => {
+                                                    std::process::exit(0);
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("Fatal Error in worker thread 0: {:?}", e);
-                                                    std::process::exit(128);
+                                                    eprintln!("IO Error in worker thread 0: {:?}", e);
+                                                    std::process::exit(5);
                                                 }
                                             }
-                                        }
-                                        if j2.is_finished() {
-                                            match j2.join() {
-                                                Ok(r) => match r {
-                                                    Ok(_) => {
-                                                        std::process::exit(0);
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!("IO Error in worker thread 1: {:?}", e);
-                                                        std::process::exit(5);
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("Fatal Error in worker thread 1: {:?}", e);
-                                                    std::process::exit(128);
-                                                }
+                                            Err(e) => {
+                                                eprintln!("Fatal Error in worker thread 0: {:?}", e);
+                                                std::process::exit(128);
                                             }
                                         }
                                     }
-                                });
-                            } else {
-                                let processor = PairProcessor::<_, _, _, $otype, $osep, $oupper>::new_fast(reader, writer);
-                                thread::scope(|s| {
-                                    let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
-                                        if args.stats {
-                                            unsafe { processor.loop_thread::<true, true>(kernel0, #[cfg(feature = "hpc")] args.core0) }
-                                        } else {
-                                            unsafe { processor.loop_thread::<true, false>(kernel0, #[cfg(feature = "hpc")] args.core0) }
-                                        }
-                                    }).expect("Failed to spawn worker thread 0");
-                                    let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
-                                        if args.stats {
-                                            unsafe { processor.loop_thread::<false, true>(kernel1, #[cfg(feature = "hpc")] args.core1) }
-                                        } else {    
-                                            unsafe { processor.loop_thread::<false, false>(kernel1, #[cfg(feature = "hpc")] args.core1) }
-                                        }
-                                    }).expect("Failed to spawn worker thread 1");
-
-                                    loop {
-                                        std::thread::park_timeout(std::time::Duration::from_secs(1));
-                                        if j1.is_finished() {
-                                            match j1.join() {
-                                                Ok(r) => match r {
-                                                    Ok(_) => {
-                                                        std::process::exit(0);
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!("IO Error in worker thread 0: {:?}", e);
-                                                        std::process::exit(5);
-                                                    }
+                                    if j2.is_finished() {
+                                        match j2.join() {
+                                            Ok(r) => match r {
+                                                Ok(_) => {
+                                                    std::process::exit(0);
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("Fatal Error in worker thread 0: {:?}", e);
-                                                    std::process::exit(128);
+                                                    eprintln!("IO Error in worker thread 1: {:?}", e);
+                                                    std::process::exit(5);
                                                 }
                                             }
-                                        }
-                                        if j2.is_finished() {
-                                            match j2.join() {
-                                                Ok(r) => match r {
-                                                    Ok(_) => {
-                                                        std::process::exit(0);
-                                                    }
-                                                    Err(e) => {
-                                                        eprintln!("IO Error in worker thread 1: {:?}", e);
-                                                        std::process::exit(5);
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("Fatal Error in worker thread 1: {:?}", e);
-                                                    std::process::exit(128);
-                                                }
+                                            Err(e) => {
+                                                eprintln!("Fatal Error in worker thread 1: {:?}", e);
+                                                std::process::exit(128);
                                             }
                                         }
                                     }
-                                });
-                            }
+                                }
+                            });
                         }
                         )*
                         _ => {
-                            panic!("invalid output format: {}", args.output_format);
+                            eprintln!(r#"invalid output format: '{}',
+                            
+                            please try one of the following:
+
+                            'raw', 'RAW': raw binary output
+                            'q+raw', 'q+RAW': raw binary output with quality score prefix in float format little endian
+
+                            'hex', 'HEX': hex output
+                            'q+hex', 'q+HEX': hex output with ASCII decimal quality score prefix separated by a colon
+
+                            'bin', 'BIN': binary output
+                            'q+bin', 'q+BIN': binary output with ASCII decimal quality score prefix separated by a colon
+
+                            'hex+lf', 'HEX+LF': hex output with line feed separator
+                            'hex+crlf', 'HEX+CRLF': hex output with carriage return line feed separator
+                            'hex+cr', 'HEX+CR': hex output with carriage return separator
+                            
+                            'bin+lf', 'BIN+LF': binary output with line feed separator
+                            'bin+crlf', 'BIN+CRLF': binary output with carriage return line feed separator
+                            'bin+cr', 'BIN+CR': binary output with carriage return separator    
+                            
+                            'q+hex', 'q+HEX': hex output with ASCII decimal quality score prefix separated by a colon
+                            'q+bin', 'q+BIN': binary output with ASCII decimal quality score prefix separated by a colon
+
+                            'hex+lf', 'HEX+LF': hex output with line feed separator
+                            'hex+crlf', 'HEX+CRLF': hex output with carriage return line feed separator
+                            'hex+cr', 'HEX+CR': hex output with carriage return separator
+                            
+                            'q+hex+lf', 'q+HEX+LF': hex output with ASCII decimal quality score prefix separated by a colon and line feed separator     
+                            'q+hex+crlf', 'q+HEX+CRLF': hex output with ASCII decimal quality score prefix separated by a colon and carriage return line feed separator
+                            'q+hex+cr', 'q+HEX+CR': hex output with ASCII decimal quality score prefix separated by a colon and carriage return separator
+
+                            'q+bin+lf', 'q+BIN+LF': binary output with ASCII decimal quality score prefix separated by a colon and line feed separator
+                            'q+bin+crlf', 'q+BIN+CRLF': binary output with ASCII decimal quality score prefix separated by a colon and carriage return line feed separator
+                            'q+bin+cr', 'q+BIN+CR': binary output with ASCII decimal quality score prefix separated by a colon and carriage return separator
+
+                            "#, arg_output_format);
+                            std::process::exit(255);
                         }
                     }
                 }
@@ -836,6 +779,10 @@ fn main() {
                 "q+BIN+cr" | "q+BIN+CR" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_CR, true),
 
             );
+        }
+        _ => {
+            eprintln!("Invalid subcommand, try --help for usage");
+            std::process::exit(255);
         }
     }
 }
