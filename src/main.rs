@@ -123,6 +123,20 @@ fn build_cli() -> Command {
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
+                    Arg::new("core0")
+                        .long("core0")
+                        .help("Pin processing to core 0")
+                        .value_parser(value_parser!(usize))
+                        .hide(!cfg!(feature = "hpc")),
+                )
+                .arg(
+                    Arg::new("core1")
+                        .long("core1")
+                        .help("Pin processing to core 1")
+                        .value_parser(value_parser!(usize))
+                        .hide(!cfg!(feature = "hpc")),
+                )
+                .arg(
                     Arg::new("format")
                         .short('f')
                         .long("format")
