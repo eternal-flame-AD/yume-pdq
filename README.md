@@ -1,5 +1,8 @@
 # yume-pdq
 
+[![Builds](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/yume-pdq/build.yml?branch=main&label=Builds)](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/build.yml)
+[![docs.rs](https://img.shields.io/docsrs/yume-pdq)](https://docs.rs/yume-pdq/)
+
 A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm that prioritizes throughput over precision.
 
 ## Table of Contents
@@ -43,6 +46,8 @@ Prerequisites:
 - To use f32x8 SIMD kernel, you need an x86_64 CPU with AVX2 and FMA support
 - To use f32x16 SIMD kernel, you need an x86_64 CPU with AVX512F support (usually every single AVX512 CPU supports this)
 
+To save cloning this repo if you just want a published version (check on [crates.io](https://crates.io/crates/yume-pdq)), replace `cargo build --release` with `cargo install yume-pdq[@<version>]`.
+
 Compilation for your own CPU (AVX2 if available, falls back to an auto-vectorized scalar kernel) is done usually with:
 
 ```bash
@@ -71,7 +76,7 @@ See [binary_usage.md](binary_usage.md) or the CLI help menu for details and prac
 
 See [integration/python.py](integration/python.py) for an example of how to use this library from Python.
 
-You can download a pre-built shared object from Github Actions artifacts but I recommend building it for your specific machine for best assurance that it would work and performance.
+You can download a pre-built AVX2 shared object from GitHub release artifacts but I recommend building it for your specific machine for best assurance that it would work and performance.
 
 ```py
 python integration/hash.py test-data/aaa-orig.jpg

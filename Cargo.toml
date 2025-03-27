@@ -14,8 +14,8 @@ exclude= [
     ".vscode/*",
     "bench-plot/*",
     "step_by_step/*",
+    "pipeline_overview.png",
 ]
-
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
@@ -52,6 +52,7 @@ inherits = "release"
 lto = false
 
 [features]
+default = ["std"]
 std = []
 avx512 = []
 ffi = ["std"]
