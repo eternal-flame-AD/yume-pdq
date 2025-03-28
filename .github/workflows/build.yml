@@ -27,6 +27,10 @@ jobs:
       with:
         components: rust-src
         targets: x86_64-unknown-linux-gnu
+    
+    - name: Run tests
+      run: |
+        RUSTFLAGS="-C target-cpu=native" cargo test --release --all-features
 
     - name: Build GNU targets
       run: |

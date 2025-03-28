@@ -24,6 +24,30 @@ use core::ops::{Deref, DerefMut};
 use const_default::ConstDefault;
 use generic_array::{ArrayLength, GenericArray};
 
+#[repr(align(8))]
+/// Align the item to 8 bytes
+pub struct Align8<T>(pub T);
+
+impl<T: Default> Default for Align8<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T> Deref for Align8<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Align8<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[repr(align(32))]
 /// Align the item to 32 bytes.
 pub struct Align32<T>(pub T);

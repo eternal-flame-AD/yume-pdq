@@ -31,7 +31,7 @@ use generic_array::{
 
 use crate::{
     alignment::{Align32, DefaultPaddedArray},
-    kernel::Kernel,
+    kernel::{Kernel, TENT_FILTER_EFFECTIVE_COLS},
 };
 
 use super::{
@@ -301,24 +301,93 @@ impl Avx2F32Kernel {
     }
 }
 
-unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: ArrayLength>(
+unsafe fn jarosz_compress_avx2_pad1<Buffer1WidthX: ArrayLength, Buffer1LengthY: ArrayLength>(
     buffer: &GenericArray<GenericArray<f32, U512>, U512>,
     output: &mut GenericArray<GenericArray<f32, Buffer1WidthX>, Buffer1LengthY>,
 ) {
     unsafe {
+        _mm_prefetch::<_MM_HINT_T1>(buffer.as_ptr().cast());
+        _mm_prefetch::<_MM_HINT_ET1>(output.as_ptr().cast());
+
+        let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
+        let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
+        let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
+
+        let mut min = _mm256_set1_ps(f32::MAX);
+        let mut max = _mm256_set1_ps(f32::MIN);
+
         // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
-        let mut out_buffer = Align32([0.0; 8]);
+        let mut out_buffer = Align32([0.0f32; 8]);
+
+        macro_rules! horizontal {
+            (max($a:expr)) => {{
+                let pairwise = _mm256_max_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                let every4 = _mm256_max_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                let every8 = _mm256_max_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+                _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                out_buffer.0[0]
+            }};
+            (min($a:expr)) => {{
+                let pairwise = _mm256_min_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                let every4 = _mm256_min_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                let every8 = _mm256_min_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                out_buffer.0[0]
+            }};
+            (sum($a:expr)) => {{
+                let pairwise = _mm256_add_ps($a, _mm256_permutevar8x32_ps($a, shift1));
+                let every4 = _mm256_add_ps(pairwise, _mm256_permutevar8x32_ps(pairwise, shift2));
+                let every8 = _mm256_add_ps(every4, _mm256_permutevar8x32_ps(every4, shift4));
+
+                _mm256_store_ps(out_buffer.0.as_mut_ptr(), every8);
+                out_buffer.0[0]
+            }};
+        }
+
+        const _ASSERT_CONVOLUTION_IS_7X7_COLS: [(); TENT_FILTER_EFFECTIVE_COLS] = [(); 7]; // one convolution kernel is 7 cols wide
+        const _ASSERT_CONVOLUTION_IS_7X7_ROWS: [(); TENT_FILTER_EFFECTIVE_ROWS] = [(); 7]; // one convolution kernel is 7 rows wide
+
+        const HALF_WINDOW_SIZE: usize = (TENT_FILTER_EFFECTIVE_ROWS + 1) / 2;
+        // register block the tent filter weights
+        // this is symmetric so we only need 4 registers, each register hold 8 weights (incl. 1 padding)
+        let tent_filter_weight_rows: [__m256; HALF_WINDOW_SIZE] = [
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr()),
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(8)),
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(16)),
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(24)),
+        ];
 
         for outi in 0..127 {
-            let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
+            let in_i = (outi + 1) * 4 - TENT_FILTER_COLUMN_OFFSET;
+            debug_assert_eq!(
+                in_i,
+                CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET
+            );
             for outj in 0..127 {
-                let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                 let mut sum = _mm256_setzero_ps();
-                for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
+                let in_j = (outj + 1) * 4 - TENT_FILTER_COLUMN_OFFSET;
+                debug_assert_eq!(
+                    in_j,
+                    CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET
+                );
+                for di in 0..HALF_WINDOW_SIZE {
                     let buffer =
                         _mm256_loadu_ps(buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j));
-                    let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
-                    sum = _mm256_fmadd_ps(buffer, weights, sum);
+                    min = _mm256_min_ps(min, buffer);
+                    max = _mm256_max_ps(max, buffer);
+                    sum = _mm256_fmadd_ps(buffer, tent_filter_weight_rows[di], sum);
+                }
+                for di in HALF_WINDOW_SIZE..TENT_FILTER_EFFECTIVE_ROWS {
+                    let buffer =
+                        _mm256_loadu_ps(buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j));
+                    min = _mm256_min_ps(min, buffer);
+                    max = _mm256_max_ps(max, buffer);
+                    sum = _mm256_fmadd_ps(
+                        buffer,
+                        tent_filter_weight_rows[TENT_FILTER_EFFECTIVE_ROWS - di],
+                        sum,
+                    );
                 }
                 sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
                 sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
@@ -326,7 +395,160 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
                 output[outi][outj] = out_buffer.0[0] + out_buffer.0[4];
             }
         }
+
+        let min = horizontal!(min(min));
+        let max = horizontal!(max(max));
+        let offset = _mm256_set1_ps(min);
+        let multiplier_s = 255.0 / (max - min) as f32;
+        let multiplier = _mm256_set1_ps(multiplier_s);
+
+        // dictate 8*2 = 16 registers and let the compiler sort out the rest
+        const BATCH_SIZE: usize = 8;
+
+        for lane in (0..(Buffer1WidthX::USIZE * Buffer1LengthY::USIZE)).step_by(8 * BATCH_SIZE) {
+            let update = output.as_mut_ptr().cast::<f32>().add(lane);
+
+            let reads: [__m256; BATCH_SIZE] =
+                core::array::from_fn(|i| _mm256_loadu_ps(update.add(i * 8)));
+
+            reads.iter().enumerate().for_each(|(i, read)| {
+                _mm256_storeu_ps(
+                    update.add(i * 8),
+                    _mm256_mul_ps(_mm256_sub_ps(*read, offset), multiplier),
+                );
+            });
+        }
+
+        let residuals = core::slice::from_raw_parts_mut(
+            output.as_mut_ptr().cast::<f32>().add(
+                Buffer1WidthX::USIZE * Buffer1LengthY::USIZE / (8 * BATCH_SIZE) * (8 * BATCH_SIZE),
+            ),
+            Buffer1WidthX::USIZE * Buffer1LengthY::USIZE % (8 * BATCH_SIZE),
+        );
+
+        for residual in residuals {
+            *residual = (*residual - min) * multiplier_s;
+        }
+
         // crate::testing::dump_image("step_by_step/compress/avx2/output.ppm", output);
+    }
+}
+
+unsafe fn jarosz_compress_u8_avx2_pad1<Buffer1WidthX: ArrayLength, Buffer1LengthY: ArrayLength>(
+    buffer: &GenericArray<GenericArray<u8, U512>, U512>,
+    output: &mut GenericArray<GenericArray<f32, Buffer1WidthX>, Buffer1LengthY>,
+) {
+    unsafe {
+        _mm_prefetch::<_MM_HINT_T1>(buffer.as_ptr().cast());
+        _mm_prefetch::<_MM_HINT_ET1>(output.as_ptr().cast());
+        let mut out_buffer = Align32([0u8; 32]);
+
+        let shift1 = _mm256_set_epi32(0, 7, 6, 5, 4, 3, 2, 1);
+        let shift2 = _mm256_set_epi32(1, 0, 7, 6, 5, 4, 3, 2);
+        let shift4 = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
+
+        macro_rules! horizontal {
+            (max($a:expr)) => {{
+                let pairwise = _mm256_max_epu8($a, _mm256_permutevar8x32_epi32($a, shift1));
+                let every4 =
+                    _mm256_max_epu8(pairwise, _mm256_permutevar8x32_epi32(pairwise, shift2));
+                let every8 = _mm256_max_epu8(every4, _mm256_permutevar8x32_epi32(every4, shift4));
+                _mm256_store_epi64(out_buffer.0.as_mut_ptr().cast(), every8);
+                out_buffer.0[0]
+            }};
+            (min($a:expr)) => {{
+                let pairwise = _mm256_min_epu8($a, _mm256_permutevar8x32_epi32($a, shift1));
+                let every4 =
+                    _mm256_min_epu8(pairwise, _mm256_permutevar8x32_epi32(pairwise, shift2));
+                let every8 = _mm256_min_epu8(every4, _mm256_permutevar8x32_epi32(every4, shift4));
+
+                _mm256_store_epi64(out_buffer.0.as_mut_ptr().cast(), every8);
+                out_buffer.0[0]
+            }};
+        }
+
+        let mut min = _mm256_set1_epi8(u8::MAX as i8);
+        let mut max = _mm256_set1_epi8(u8::MIN as i8);
+        // 256/8 = 32 pixels per lane, unroll inner loop
+        // convolution center is 4, 8, 12 ...
+        const _ASSERT_CONVOLUTION_IS_7X7_COLS: [(); TENT_FILTER_EFFECTIVE_COLS] = [(); 7]; // one convolution kernel is 7 cols wide
+        const _ASSERT_CONVOLUTION_IS_7X7_ROWS: [(); TENT_FILTER_EFFECTIVE_ROWS] = [(); 7]; // one convolution kernel is 7 rows wide
+
+        const HALF_WINDOW_SIZE: usize = (TENT_FILTER_EFFECTIVE_ROWS + 1) / 2;
+        // register block the tent filter weights
+        // this is symmetric so we only need 4 registers, each register hold 8 weights (incl. 1 padding)
+        let tent_filter_weight_rows: [__m256; HALF_WINDOW_SIZE] = [
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr()),
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(8)),
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(16)),
+            _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(24)),
+        ];
+
+        _mm_prefetch::<_MM_HINT_ET1>(output.as_ptr().cast());
+
+        for i in 0..512 {
+            for j in (0..512).step_by(256 / 8) {
+                let ptr = buffer.flatten().as_ptr().add(i * 512 + j).cast();
+                let read = _mm256_loadu_si256(ptr);
+                min = _mm256_min_epu8(min, read);
+                max = _mm256_max_epu8(max, read);
+            }
+        }
+
+        let min = horizontal!(min(min));
+        let max = horizontal!(max(max));
+
+        let multiplier_s = 255.0 / (max - min) as f32;
+        let multiplier = _mm256_set1_ps(multiplier_s);
+        let offset = _mm_set1_epi8(min as i8);
+
+        for outi in 0..127 {
+            let in_i = (outi + 1) * 4 - TENT_FILTER_COLUMN_OFFSET;
+            debug_assert_eq!(
+                in_i,
+                CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET
+            );
+
+            for outj in 0..127 {
+                let mut sum = _mm256_setzero_ps();
+                let in_j = (outj + 1) * 4 - TENT_FILTER_COLUMN_OFFSET;
+                debug_assert_eq!(
+                    in_j,
+                    CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET
+                );
+                let buffer_rows: [__m256; TENT_FILTER_EFFECTIVE_ROWS] =
+                    core::array::from_fn(|di| {
+                        let unsigned8 = _mm256_castsi256_si128(_mm256_loadu_si256(
+                            buffer
+                                .flatten()
+                                .as_ptr()
+                                .add((in_i + di) * 512 + in_j)
+                                .cast(),
+                        ));
+
+                        let offset_unsigned8 = _mm_subs_epu8(unsigned8, offset);
+                        let signed32 = _mm256_cvtepu8_epi32(offset_unsigned8);
+                        let float32 = _mm256_cvtepi32_ps(signed32);
+
+                        _mm256_mul_ps(float32, multiplier)
+                    });
+                for di in 0..HALF_WINDOW_SIZE {
+                    sum = _mm256_fmadd_ps(buffer_rows[di], tent_filter_weight_rows[di], sum);
+                }
+                for di in HALF_WINDOW_SIZE..TENT_FILTER_EFFECTIVE_ROWS {
+                    sum = _mm256_fmadd_ps(
+                        buffer_rows[di],
+                        tent_filter_weight_rows[TENT_FILTER_EFFECTIVE_ROWS - di],
+                        sum,
+                    );
+                }
+                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                _mm256_store_ps(out_buffer.0.as_mut_ptr().cast::<f32>(), sum);
+                output[outi][outj] = out_buffer.as_ptr().cast::<f32>().read()
+                    + out_buffer.as_ptr().cast::<f32>().read();
+            }
+        }
     }
 }
 
@@ -358,7 +580,20 @@ impl Kernel for Avx2F32Kernel {
         >,
     ) {
         unsafe {
-            jarosz_compress_avx2(buffer, output);
+            jarosz_compress_avx2_pad1(buffer, output);
+        }
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, Self::InputDimension>, Self::InputDimension>,
+        output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) {
+        unsafe {
+            jarosz_compress_u8_avx2_pad1(buffer, output);
         }
     }
 
@@ -610,7 +845,20 @@ impl Kernel for Avx512F32Kernel {
         // this part requires serious unrolling to overcome suboptimal memory access patterns
         // so we will not vectorize it further
         unsafe {
-            jarosz_compress_avx2(buffer, output);
+            jarosz_compress_avx2_pad1(buffer, output);
+        }
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, Self::InputDimension>, Self::InputDimension>,
+        output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) {
+        unsafe {
+            jarosz_compress_u8_avx2_pad1(buffer, output);
         }
     }
 
@@ -909,7 +1157,10 @@ impl Kernel for Avx512F32Kernel {
 
 #[cfg(test)]
 mod tests {
-    use crate::alignment::Align32;
+    use crate::{
+        alignment::Align32,
+        kernel::{DefaultKernelPadXYTo128, SquareGenericArrayExt},
+    };
 
     use super::*;
 
@@ -984,5 +1235,182 @@ mod tests {
             assert_eq!(horizontal!(sum(case_6)), 36.0);
             assert_eq!(horizontal!(sum(case_7)), 36.0);
         }
+    }
+
+    fn test_avx2_u8_f32_equivalence<const DYNAMIC_RANGE: u8, const OFFSET: u8>() {
+        use crate::kernel::Kernel;
+
+        // Create kernels
+        let mut default_kernel = DefaultKernelPadXYTo128::default();
+
+        // Create test inputs
+        let mut f32_input_vec = vec![Default::default(); 512 * 512];
+        let f32_input =
+            GenericArray::from_mut_slice(f32_input_vec.as_mut_slice()).unflatten_square_mut();
+        let mut u8_input_vec = vec![Default::default(); 512 * 512];
+        let u8_input =
+            GenericArray::from_mut_slice(u8_input_vec.as_mut_slice()).unflatten_square_mut();
+
+        // Fill with a pattern that exercises edge cases
+        for i in 0..512 {
+            for j in 0..512 {
+                let val = (((i * 3 + j * 7) % DYNAMIC_RANGE as usize) as u8) + OFFSET; // Non-trivial pattern
+                u8_input[i][j] = val;
+                f32_input[i][j] = val as f32;
+            }
+        }
+
+        // Output buffers
+        let mut output_u8_avx2_vec = vec![Default::default(); 128 * 128];
+        let mut output_u8_avx2 =
+            GenericArray::from_mut_slice(output_u8_avx2_vec.as_mut_slice()).unflatten_square_mut();
+        let mut output_f32_avx2_vec = vec![Default::default(); 128 * 128];
+        let mut output_f32_avx2 =
+            GenericArray::from_mut_slice(output_f32_avx2_vec.as_mut_slice()).unflatten_square_mut();
+        let mut output_default_vec = vec![Default::default(); 128 * 128];
+        let mut output_default =
+            GenericArray::from_mut_slice(output_default_vec.as_mut_slice()).unflatten_square_mut();
+        let mut output_u8_default_vec = vec![Default::default(); 128 * 128];
+        let mut output_u8_default =
+            GenericArray::from_mut_slice(output_u8_default_vec.as_mut_slice())
+                .unflatten_square_mut();
+
+        // Run all three versions
+        unsafe {
+            jarosz_compress_u8_avx2_pad1::<U128, U128>(&u8_input, &mut output_u8_avx2);
+            jarosz_compress_avx2_pad1::<U128, U128>(&f32_input, &mut output_f32_avx2);
+        }
+        default_kernel.jarosz_compress(&f32_input, &mut output_default);
+        default_kernel.jarosz_compress_u8(&u8_input, &mut output_u8_default);
+
+        // sanity check that the source of truth is correct
+
+        let output_default_min = output_default
+            .iter()
+            .flatten()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_default_max = output_default
+            .iter()
+            .flatten()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_default_range = output_default_max - output_default_min;
+        assert!(output_default_range > 0.0);
+        let output_u8_default_min = output_u8_default
+            .iter()
+            .flatten()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_u8_default_max = output_u8_default
+            .iter()
+            .flatten()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        // crate::testing::dump_image("output_u8_default.ppm", &output_u8_default);
+        // crate::testing::dump_image("output_default.ppm", &output_default);
+        for i in 0..127 {
+            for j in 0..127 {
+                let regularized_u8_in = (output_u8_default[i][j] - output_u8_default_min)
+                    / (output_u8_default_max - output_u8_default_min);
+                let regularized_default_in = (output_default[i][j] - output_default_min)
+                    / (output_default_max - output_default_min);
+                let u8_vs_default = (regularized_u8_in - regularized_default_in).abs();
+
+                assert!(
+                    u8_vs_default < 1.0,
+                    "Default u8 vs default f32 mismatch at [{},{}]: u8={}, default={}, diff={}",
+                    i,
+                    j,
+                    output_u8_default[i][j],
+                    output_default[i][j],
+                    u8_vs_default
+                );
+            }
+        }
+
+        let output_u8_avx2_min = output_u8_avx2
+            .iter()
+            .flatten()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_u8_avx2_max = output_u8_avx2
+            .iter()
+            .flatten()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_f32_avx2_min = output_f32_avx2
+            .iter()
+            .flatten()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_f32_avx2_max = output_f32_avx2
+            .iter()
+            .flatten()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let output_f32_avx2_range = output_f32_avx2_max - output_f32_avx2_min;
+        assert!(output_f32_avx2_range > 0.0);
+
+        for i in 0..127 {
+            for j in 0..127 {
+                let regularized_u8_in = (output_u8_avx2[i][j] - output_u8_avx2_min)
+                    / (output_u8_avx2_max - output_u8_avx2_min);
+                let regularized_f32_in = (output_f32_avx2[i][j] - output_f32_avx2_min)
+                    / (output_f32_avx2_max - output_f32_avx2_min);
+                let regularized_u8_default = (output_u8_default[i][j] - output_u8_default_min)
+                    / (output_u8_default_max - output_u8_default_min);
+                let regularized_default_in = (output_default[i][j] - output_default_min)
+                    / (output_default_max - output_default_min);
+                let abs_diff_u8_f32 = (regularized_u8_in - regularized_f32_in).abs();
+                let abs_diff_u8_default = (regularized_u8_default - regularized_default_in).abs();
+
+                assert!(
+                    abs_diff_u8_f32 < 1.0,
+                    "AVX2 u8 vs f32 mismatch at [{},{}]: u8={}, f32={}, diff={} (truth was {})",
+                    i,
+                    j,
+                    output_u8_avx2[i][j],
+                    output_f32_avx2[i][j],
+                    abs_diff_u8_f32,
+                    output_default[i][j]
+                );
+
+                assert!(
+                    abs_diff_u8_default < 1.0,
+                    "AVX2 u8 vs default u8 mismatch at [{},{}]: u8={}, default={}, diff={}",
+                    i,
+                    j,
+                    output_u8_avx2[i][j],
+                    output_u8_default[i][j],
+                    abs_diff_u8_default,
+                );
+
+                assert!(
+                    abs_diff_u8_f32 < 1.0,
+                    "AVX2 f32 vs default f32 mismatch at [{},{}]: f32={}, default={}, diff={}",
+                    i,
+                    j,
+                    output_f32_avx2[i][j],
+                    output_default[i][j],
+                    abs_diff_u8_f32
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_avx2_u8_f32_equivalence_255_0() {
+        test_avx2_u8_f32_equivalence::<255, 0>();
+    }
+
+    #[test]
+    fn test_avx2_u8_f32_equivalence_10_0() {
+        test_avx2_u8_f32_equivalence::<10, 0>();
+    }
+
+    #[test]
+    fn test_avx2_u8_f32_equivalence_64_32() {
+        test_avx2_u8_f32_equivalence::<64, 32>();
     }
 }

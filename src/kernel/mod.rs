@@ -261,6 +261,19 @@ pub trait Kernel {
     ) where
         Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
 
+    /// Do the same transformation as [`Self::jarosz_compress`] but taking in [`u8`] (of arbitrary range) and scale to 0.0 to 255.0.
+    ///
+    /// Less accurate than [`Self::jarosz_compress`] but reduces the amount of memory bandwidth required by about 4x.
+    fn jarosz_compress_u8(
+        &mut self,
+        _buffer: &GenericArray<GenericArray<u8, Self::InputDimension>, Self::InputDimension>,
+        _output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
+
     /// Convert input to binary by thresholding at median
     ///
     /// # Parameters
@@ -465,6 +478,8 @@ where
             Self::Buffer1LengthY,
         >,
     ) {
+        let mut min = f32::MAX;
+        let mut max = f32::MIN;
         for outi in 0..127 {
             let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
             for outj in 0..127 {
@@ -474,6 +489,53 @@ where
                     for dj in 0..TENT_FILTER_EFFECTIVE_COLS {
                         sum += TENT_FILTER_WEIGHTS[di * TENT_FILTER_EFFECTIVE_COLS + dj]
                             * buffer[in_i + di][in_j + dj];
+                    }
+                }
+                min = min.min(sum);
+                max = max.max(sum);
+                output[outi][outj] = sum;
+            }
+        }
+        let multiplier = 255.0 / (max - min) as f32;
+        for outi in 0..127 {
+            for outj in 0..127 {
+                output[outi][outj] = (output[outi][outj] - min) * multiplier;
+            }
+        }
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, Self::InputDimension>, Self::InputDimension>,
+        output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    {
+        let max = buffer.iter().flatten().max().unwrap();
+        let min = buffer.iter().flatten().min().unwrap();
+
+        // if all values are the same, we can just zero out the output and return
+        if max == min {
+            output.iter_mut().flatten().for_each(|x| *x = 0.0);
+            return;
+        }
+
+        let multiplier = 255.0 / (max - min) as f32;
+
+        for outi in 0..127 {
+            let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
+            for outj in 0..127 {
+                let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
+                let mut sum = 0.0;
+                for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
+                    for dj in 0..TENT_FILTER_EFFECTIVE_COLS {
+                        let input = buffer[in_i + di][in_j + dj] - min;
+
+                        sum += TENT_FILTER_WEIGHTS[di * TENT_FILTER_EFFECTIVE_COLS + dj]
+                            * (input as f32 * multiplier);
                     }
                 }
                 output[outi][outj] = sum;
@@ -612,8 +674,67 @@ impl Kernel for ReferenceKernel<f32> {
             include!("ref.rs");
         }
 
+        let mut min = f32::MAX;
+        let mut max = f32::MIN;
+        for i in 0..512 {
+            for j in 0..512 {
+                min = min.min(buffer[i][j]);
+                max = max.max(buffer[i][j]);
+            }
+        }
+
+        let multiplier = 255.0 / (max - min) as f32;
+
         let window_size = reference::compute_jarosz_filter_window_size(512, 127);
         let mut buffer = buffer.flatten().to_vec();
+        reference::jarosz_filter_float(
+            buffer.as_mut_slice().try_into().unwrap(),
+            512,
+            512,
+            window_size,
+            window_size,
+            2,
+        );
+
+        for outi in 0..127 {
+            let ini = ((outi * 2 + 1) * 512) / (127 * 2);
+
+            for outj in 0..127 {
+                let inj = ((outj * 2 + 1) * 512) / (127 * 2);
+                let val = buffer[ini * 512 + inj];
+                output[outi][outj] = (val - min) * multiplier;
+            }
+        }
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, U512>, U512>,
+        output: &mut GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
+        #[allow(missing_docs, dead_code)]
+        mod reference {
+            include!("ref.rs");
+        }
+
+        let max = buffer.iter().flatten().max().unwrap();
+        let min = buffer.iter().flatten().min().unwrap();
+
+        // if all values are the same, we can just zero out the output and return
+        if max == min {
+            output.iter_mut().flatten().for_each(|x| *x = 0.0);
+            return;
+        }
+
+        let multiplier = 255.0 / (max - min) as f32;
+
+        let window_size = reference::compute_jarosz_filter_window_size(512, 127);
+        let mut buffer = buffer
+            .flatten()
+            .into_iter()
+            .map(|&x: &u8| ((x - min) as f32) * multiplier)
+            .collect::<Vec<_>>();
+
         reference::jarosz_filter_float(
             buffer.as_mut_slice().try_into().unwrap(),
             512,
@@ -745,12 +866,72 @@ impl Kernel for ReferenceKernel<f64> {
             include!("ref.rs");
         }
 
+        let mut min = f32::MAX as f64;
+        let mut max = f32::MIN as f64;
+        for i in 0..512 {
+            for j in 0..512 {
+                min = min.min(buffer[i][j] as f64);
+                max = max.max(buffer[i][j] as f64);
+            }
+        }
+
+        let multiplier = 255.0 / (max - min) as f64;
+
         let window_size = reference::compute_jarosz_filter_window_size(512, 127);
         let mut buffer = buffer
             .flatten()
             .into_iter()
             .map(|s| *s as f64)
             .collect::<Vec<_>>();
+        reference::jarosz_filter_float(
+            buffer.as_mut_slice().try_into().unwrap(),
+            512,
+            512,
+            window_size,
+            window_size,
+            2,
+        );
+
+        for outi in 0..127 {
+            let ini = ((outi * 2 + 1) * 512) / (127 * 2);
+
+            for outj in 0..127 {
+                let inj = ((outj * 2 + 1) * 512) / (127 * 2);
+
+                let val = buffer[ini * 512 + inj];
+                output[outi][outj] = (val - min) * multiplier;
+            }
+        }
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, U512>, U512>,
+        output: &mut GenericArray<GenericArray<f64, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
+        #[allow(missing_docs, dead_code)]
+        mod reference {
+            include!("ref.rs");
+        }
+
+        let max = buffer.iter().flatten().max().unwrap();
+        let min = buffer.iter().flatten().min().unwrap();
+
+        // if all values are the same, we can just zero out the output and return
+        if max == min {
+            output.iter_mut().flatten().for_each(|x| *x = 0.0);
+            return;
+        }
+
+        let multiplier = 255.0 / (max - min) as f64;
+
+        let window_size = reference::compute_jarosz_filter_window_size(512, 127);
+        let mut buffer = buffer
+            .flatten()
+            .into_iter()
+            .map(|&x: &u8| ((x - min) as f64) * multiplier)
+            .collect::<Vec<_>>();
+
         reference::jarosz_filter_float(
             buffer.as_mut_slice().try_into().unwrap(),
             512,
@@ -919,6 +1100,21 @@ impl<const C: u32> Kernel for ReferenceKernel<float128::ArbFloat<C>> {
             include!("ref.rs");
         }
 
+        let min = buffer
+            .iter()
+            .flatten()
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let max = buffer
+            .iter()
+            .flatten()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+
+        let offset = float128::ArbFloat::<C>::from_f32(*min).unwrap();
+
+        let multiplier = float128::ArbFloat::<C>::from_f64(255.0 / (max - min) as f64).unwrap();
+
         let window_size = reference::compute_jarosz_filter_window_size(512, 127);
         let mut buffer = buffer
             .flatten()
@@ -935,6 +1131,68 @@ impl<const C: u32> Kernel for ReferenceKernel<float128::ArbFloat<C>> {
         );
 
         // target centers not corners:
+
+        for outi in 0..127 {
+            let ini = ((outi * 2 + 1) * 512) / (127 * 2);
+
+            for outj in 0..127 {
+                let inj = ((outj * 2 + 1) * 512) / (127 * 2);
+
+                output[outi][outj] =
+                    (buffer[ini * 512 + inj].clone() - offset.clone()) * multiplier.clone();
+            }
+        }
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, U512>, U512>,
+        output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) {
+        #[allow(missing_docs, dead_code)]
+        mod reference {
+            include!("ref.rs");
+        }
+
+        let max = buffer.iter().flatten().max().unwrap();
+        let min = buffer.iter().flatten().min().unwrap();
+
+        // if all values are the same, we can just zero out the output and return
+        if max == min {
+            output
+                .iter_mut()
+                .flatten()
+                .for_each(|x| *x = Default::default());
+            return;
+        }
+
+        let multiplier = float128::ArbFloat::<C>::from_f64(255.0 / (max - min) as f64).unwrap();
+
+        let window_size = reference::compute_jarosz_filter_window_size(512, 127);
+        let mut buffer = buffer
+            .flatten()
+            .into_iter()
+            .map(|&x: &u8| float128::ArbFloat::<C>::from_u8(x - min).unwrap() * multiplier.clone())
+            .collect::<Vec<_>>();
+
+        // if the input is only 0 and 1, we need it to go to 0 and 255 (multiply by 255)
+        // if the input is only 0 and 255, we multiply by 1
+        if max - min > 0 {
+            let multiplier = float128::ArbFloat::<C>::from_f64(255.0 / (max - min) as f64).unwrap();
+            buffer.iter_mut().for_each(|x| *x *= multiplier.clone());
+        }
+
+        reference::jarosz_filter_float(
+            buffer.as_mut_slice().try_into().unwrap(),
+            512,
+            512,
+            window_size,
+            window_size,
+            2,
+        );
 
         for outi in 0..127 {
             let ini = ((outi * 2 + 1) * 512) / (127 * 2);
@@ -1099,7 +1357,6 @@ mod tests {
         );
 
         for i in 0..16 {
-            print!("(reference, actual) = [");
             for j in 0..16 {
                 let diff = (output_ref[i][j] - output[i][j]).abs();
                 let diff_ref = diff / output_ref[i][j];
@@ -1110,7 +1367,6 @@ mod tests {
                     diff,
                     diff_ref
                 );
-                print!("({} {}) ", output_ref[i][j], output[i][j]);
             }
             println!("]");
         }
@@ -1145,7 +1401,6 @@ mod tests {
         );
 
         for i in 0..16 {
-            print!("(reference, actual) = [");
             for j in 0..16 {
                 let diff = (output_ref[i][j] - output[i][j]).abs();
                 let diff_ref = diff / output_ref[i][j];
@@ -1156,7 +1411,6 @@ mod tests {
                     diff,
                     diff_ref
                 );
-                print!("({} {}) ", output_ref[i][j], output[i][j]);
             }
             println!("]");
         }

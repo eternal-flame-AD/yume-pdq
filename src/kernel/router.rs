@@ -77,6 +77,14 @@ trait KernelFallthrough<
         false
     }
 
+    fn jarosz_compress_u8_opt<const CHECKED: bool>(
+        &mut self,
+        _buffer: &GenericArray<GenericArray<u8, InputDimension>, InputDimension>,
+        _output: &mut GenericArray<GenericArray<InternalFloat, Buffer1WidthX>, Buffer1LengthY>,
+    ) -> bool {
+        false
+    }
+
     fn quantize_opt<const CHECKED: bool>(
         &mut self,
         _input: &GenericArray<GenericArray<InternalFloat, OutputDimension>, OutputDimension>,
@@ -162,6 +170,19 @@ where
 
 
         self.jarosz_compress(buffer, output);
+        true
+    }
+
+    fn jarosz_compress_u8_opt<const CHECKED: bool>(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, <P as Kernel>::InputDimension>, <P as Kernel>::InputDimension>,
+        output: &mut GenericArray<GenericArray<Self::InternalFloat, <P as Kernel>::Buffer1WidthX>, <P as Kernel>::Buffer1LengthY>,
+    ) -> bool {
+        if CHECKED && !self.would_run() {
+            return false;
+        }
+
+        self.jarosz_compress_u8(buffer, output);
         true
     }
 
@@ -499,6 +520,20 @@ where
         }
 
         self.fallback.jarosz_compress(buffer, output);
+    }
+
+    fn jarosz_compress_u8(
+        &mut self,
+        buffer: &GenericArray<GenericArray<u8, Self::InputDimension>, Self::InputDimension>,
+        output: &mut GenericArray<GenericArray<Self::InternalFloat, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
+    ) {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
+            if self.preferred.jarosz_compress_u8_opt::<false>(buffer, output) {
+                return;
+            }
+        }
+
+        self.fallback.jarosz_compress_u8(buffer, output);
     }
 
     fn quantize(
