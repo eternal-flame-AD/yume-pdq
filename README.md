@@ -9,23 +9,19 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
 
 - [yume-pdq](#yume-pdq)
   - [Table of Contents](#table-of-contents)
-  - [Pipeline Overview](#pipeline-overview)
   - [Design Goals](#design-goals)
+  - [Pipeline Overview](#pipeline-overview)
   - [Binary usage](#binary-usage)
   - [FFI (C/Python) usage](#ffi-cpython-usage)
   - [Benchmark](#benchmark)
     - [Formal](#formal)
     - [Empirical / End-to-end](#empirical--end-to-end)
       - [Video Processing](#video-processing)
-    - [Why is my performance lower?](#why-is-my-performance-lower)
       - [Image Processing](#image-processing)
+    - [Why is my performance lower?](#why-is-my-performance-lower)
   - [Accuracy on test set](#accuracy-on-test-set)
   - [API Usage](#api-usage)
   - [License and attributions](#license-and-attributions)
-
-## Pipeline Overview
-
-![Pipeline Overview](pipeline_overview.png)
 
 ## Design Goals
 
@@ -38,6 +34,10 @@ Not bit-identical to the reference implementation.
 Zero dependencies in the final binary (including statically linked crates).
 
 No-std support.
+
+## Pipeline Overview
+
+![Pipeline Overview](pipeline_overview.png)
 
 ## Binary usage
 
@@ -134,18 +134,6 @@ AVX2 was able to saturate the speed FFMPEG can generate SMPTE bars.
 
 Additionally, the format of the output (hex, binary, or raw, or prefixed with a quality score) does not significantly affect the throughput except the 7600 fps cases.
 
-### Why is my performance lower?
-
-Note that yume-pdq is a _memory bandwidth_ bound implementation, so the performance is not linear or even monotonic w.r.t. the speed of your CPU, instead it is the amount of memory bandwidth available to the CPU.
-
-Rough numbers for two other platforms which supports my proposition:
-
-2020 Intel Duo Xeon Gold 6230R (2.10Ghz/4.00Ghz, 35.75M total cache (much lower than mine), DDR4-2933): Scalar 250fps Vector 500fps, still faster but significant regression!
-
-2022 AMD EPYC™ 9634 KVM (2.25Ghz/3.7Ghz, 384M total cache (much higher than mine), DDR5-4800 shared with other tenants) VPS by vendor "N" (resource is exclusive to me): Scalar 700fps Vector 2700fps, not as bad but still not as fast as the demo system.
-
-If you are on a supercomputer or a multi-socket cluster, you can start 1 instance of yume-pdq and use the `--core0` and `--core1` options to bind the two ping-pong buffer worker process on NUMA node #0, 1 other instance and bind both threads to NUMA node #1, and so on. This will allow you to use the full memory bandwidth and cache availability of the system. The core affinity flags are only available with the `--features hpc` feature due to requiring a runtime dependency.
-
 #### Image Processing
 
 When using the imagemagick `convert` command default resizing kernel (Mitchell-Netravali) is used, 1000 images are processed in 26 seconds.
@@ -159,6 +147,19 @@ Executed in   26.01 secs    fish           external
 usr time   47.76 secs    0.00 millis   47.76 secs
 sys time    9.43 secs    2.77 millis    9.43 secs
 ```
+
+### Why is my performance lower?
+
+Note that yume-pdq is a _memory bandwidth_ bound implementation, so the performance is not linear or even monotonic w.r.t. the speed of your CPU, instead it is the amount of memory bandwidth available to the CPU.
+
+Rough numbers for two other platforms which supports my proposition:
+
+2020 Intel Duo Xeon Gold 6230R (2.10Ghz/4.00Ghz, 35.75M total cache (much lower than mine), DDR4-2933): Scalar 250fps Vector 500fps, still faster but significant regression!
+
+2022 AMD EPYC™ 9634 KVM (2.25Ghz/3.7Ghz, 384M total cache (much higher than mine), DDR5-4800 shared with other tenants) VPS by vendor "N" (resource is exclusive to me): Scalar 700fps Vector 2700fps, not as bad but still not as fast as the demo system.
+
+If you are on a supercomputer or a multi-socket cluster, you can start 1 instance of yume-pdq and use the `--core0` and `--core1` options to bind the two ping-pong buffer worker process on NUMA node #0, 1 other instance and bind both threads to NUMA node #1, and so on. This will allow you to use the full memory bandwidth and cache availability of the system. The core affinity flags are only available with the `--features hpc` feature due to requiring a runtime dependency.
+
 
 ## Accuracy on test set
 
