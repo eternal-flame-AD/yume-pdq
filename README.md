@@ -327,9 +327,9 @@ fn main() {
 
 ## License and attributions
 
-This crate is licensed under the Apache 2.0 license with the EXCEPTION that when built with `reference-rug` feature where it _may_ be bound depending on your linking model by LGPLv3 license due to introducing a runtime dependency to GMP.
+This crate is licensed under the Apache 2.0 license with the EXCEPTION that when built with `reference-rug` feature _and_ under static linking builds (musl, etc.) you may be bound by LGPLv3 license due to introducing a statically linked dependency to GMP.
 
-Special thanks to [@darwinium-com](https://github/darwinium-com) for their [pdqhash](https://crates.io/crates/pdqhash) crate, which was a great source of inspiration and the reference kernel
+Special thanks to [@darwinium-com](https://github.com/darwinium-com) for their [pdqhash](https://crates.io/crates/pdqhash) crate, which was a great source of inspiration and the reference kernel
 was ~~shamelessly~~ copied almost verbatim from them.
 
 > If it works why rewrite it?
