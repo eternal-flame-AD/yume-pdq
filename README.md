@@ -17,8 +17,8 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
     - [Formal](#formal)
     - [Empirical / End-to-end](#empirical--end-to-end)
       - [Video Processing](#video-processing)
-      - [Image Processing](#image-processing)
     - [Why is my performance lower?](#why-is-my-performance-lower)
+      - [Image Processing](#image-processing)
   - [Accuracy on test set](#accuracy-on-test-set)
   - [API Usage](#api-usage)
   - [License and attributions](#license-and-attributions)
@@ -164,26 +164,31 @@ sys time    9.43 secs    2.77 millis    9.43 secs
 
 The accuracy was done by writing unit tests that do pairwise comparison with either the "pdqhash" high level API or the 32-bit floating point reference implementation or the 96-bit floating point reference implementation.
 
-Note higher distance to the `pdqhash` library is expected as they have mandatory preprocessing steps that cannot be slipped by the exposed API. The "reference" implementation is a more faithful pairwise comparison.
+Note:
 
-| Image                                                 | Kernel  | Distance vs pdqhash lib | Distance vs Ref32 | Distance vs Ref96 |
-| ----------------------------------------------------- | ------- | ----------------------- | ----------------- | ----------------- |
-| aaa-orig.jpg (real photo, official test vector)       | AVX2    | 6/256 (2.3%)            | 4/256 (1.6%)      | 4/256 (1.6%)      |
-|                                                       | AVX512  | 6/256 (2.3%)            | 4/256 (1.6%)      | 4/256 (1.6%)      |
-|                                                       | Default | 6/256 (2.3%)            | 4/256 (1.6%)      | 4/256 (1.6%)      |
-|                                                       | Ref32   | 6/256 (2.3%)            | -                 | 0/256 (0.0%)      |
-| anime.png (it's anime)                                | AVX2    | 16/256 (6.2%)           | 10/256 (3.9%)     | 10/256 (3.9%)     |
-|                                                       | AVX512  | 16/256 (6.2%)           | 10/256 (3.9%)     | 10/256 (3.9%)     |
-|                                                       | Default | 16/256 (6.2%)           | 10/256 (3.9%)     | 10/256 (3.9%)     |
-|                                                       | Ref32   | 16/256 (6.2%)           | -                 | 0/256 (0.0%)      |
-| music.png (Music Video screenshot)                    | AVX2    | 10/256 (3.9%)           | 8/256 (3.1%)      | 8/256 (3.1%)      |
-|                                                       | AVX512  | 10/256 (3.9%)           | 8/256 (3.1%)      | 8/256 (3.1%)      |
-|                                                       | Default | 10/256 (3.9%)           | 8/256 (3.1%)      | 8/256 (3.1%)      |
-|                                                       | Ref32   | 10/256 (3.9%)           | -                 | 0/256 (0.0%)      |
-| neofetch.png (neofetch screenshot, low-entropy image) | AVX2    | 27/256 (10.5%)          | 10/256 (3.9%)     | 11/256 (4.3%)     |
-|                                                       | AVX512  | 27/256 (10.5%)          | 10/256 (3.9%)     | 11/256 (4.3%)     |
-|                                                       | Default | 26/256 (10.2%)          | 10/256 (3.9%)     | 10/256 (3.9%)     |
-|                                                       | Ref32   | -                       | -                 | 0/256 (0.0%)      |
+- higher distance to the `pdqhash` library is expected as they have mandatory preprocessing steps that cannot be slipped by the exposed API. The "reference" implementation is a more faithful pairwise comparison.
+
+- the official "10 bit is correct" threshold is based on real image test vectors, not anime or drawn images, and certainly not terminal screenshots.
+  the reason you see the official test vector have much better precision is because real photos have smoother edges, and JPEG compression is also based on DCT transformation which make the frequency domain information more pronounced (see the code example below to help visualize this). However animated images and neofetch screenshots have sharp and sharper edges all throughout the image, which "blurs" the hash and creates more "ambiguous" bits.
+
+| Image                                            | Kernel  | Distance vs pdqhash lib | Distance vs Ref32 | Distance vs Ref96 |
+| ------------------------------------------------ | ------- | ----------------------- | ----------------- | ----------------- |
+| aaa-orig.jpg (real photo, official test vector)  | AVX2    | 6/256 (2.3%)            | 4/256 (1.6%)      | 4/256 (1.6%)      |
+|                                                  | AVX512  | 6/256 (2.3%)            | 4/256 (1.6%)      | 4/256 (1.6%)      |
+|                                                  | Default | 6/256 (2.3%)            | 4/256 (1.6%)      | 4/256 (1.6%)      |
+|                                                  | Ref32   | 6/256 (2.3%)            | -                 | 0/256 (0.0%)      |
+| anime.png (it's anime)                           | AVX2    | 16/256 (6.2%)           | 10/256 (3.9%)     | 10/256 (3.9%)     |
+|                                                  | AVX512  | 16/256 (6.2%)           | 10/256 (3.9%)     | 10/256 (3.9%)     |
+|                                                  | Default | 16/256 (6.2%)           | 10/256 (3.9%)     | 10/256 (3.9%)     |
+|                                                  | Ref32   | 16/256 (6.2%)           | -                 | 0/256 (0.0%)      |
+| music.png (still anime but more "realistic")     | AVX2    | 10/256 (3.9%)           | 8/256 (3.1%)      | 8/256 (3.1%)      |
+|                                                  | AVX512  | 10/256 (3.9%)           | 8/256 (3.1%)      | 8/256 (3.1%)      |
+|                                                  | Default | 10/256 (3.9%)           | 8/256 (3.1%)      | 8/256 (3.1%)      |
+|                                                  | Ref32   | 10/256 (3.9%)           | -                 | 0/256 (0.0%)      |
+| neofetch.png (terminal screenshot,  sharp edges) | AVX2    | 27/256 (10.5%)          | 10/256 (3.9%)     | 11/256 (4.3%)     |
+|                                                  | AVX512  | 27/256 (10.5%)          | 10/256 (3.9%)     | 11/256 (4.3%)     |
+|                                                  | Default | 26/256 (10.2%)          | 10/256 (3.9%)     | 10/256 (3.9%)     |
+|                                                  | Ref32   | -                       | -                 | 0/256 (0.0%)      |
 
 ## API Usage
 
