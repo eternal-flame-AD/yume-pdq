@@ -23,7 +23,10 @@
 #![cfg_attr(feature = "avx512", feature(stdarch_x86_avx512))]
 #![warn(missing_docs, clippy::pedantic)]
 
-pub use generic_array::GenericArray;
+pub use const_default::{self, ConstDefault};
+pub use generic_array::{self, GenericArray};
+pub use num_traits;
+
 use kernel::{
     Kernel,
     type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
