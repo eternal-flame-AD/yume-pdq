@@ -4,6 +4,7 @@ use rand::Rng;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
+#[allow(unused_imports)]
 use yume_pdq::{
     GenericArray,
     kernel::{

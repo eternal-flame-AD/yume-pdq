@@ -51,41 +51,53 @@ fn build_cli() -> Command {
     Command::new("yume-pdq")
         .about("Fast PDQ perceptual image hashing implementation")
         .long_about(concat!(
-            "A high-performance implementation of the PDQ perceptual image hashing algorithm. \
-             Supports various input/output formats and hardware acceleration.",
-            "\n\n",
-            env!("TARGET_SPECIFIC_CLI_MESSAGE"),
-            "\n\n",
-            "Build Facts:",
-            "\n",
-            "  Version: ", env!("CARGO_PKG_VERSION"),
-            "\n",
-            "  Optimization:",
-            " -O", env!("BUILD_OPT_LEVEL"),
-            "\n",
-            "  Feature Flags: ", env!("BUILD_CFG_TARGET_FEATURES"),
+r#"
+A high-performance implementation of the PDQ perceptual image hashing algorithm. Supports various input/output formats and hardware acceleration.
+
+This yume-pdq kernel has AVX-512 yumemi power.
+
+Build Facts:
+  Version: "#,env!("CARGO_PKG_VERSION"),r#"
+  Optimization: -O "#, env!("BUILD_OPT_LEVEL"),r#"
+  Build time CPU flag support: "#, env!("BUILD_CFG_TARGET_FEATURES")
         ))
         .version(env!("CARGO_PKG_VERSION"))
         .flatten_help(true)
         .subcommand(
             Command::new("pipe")
                 .about("Process image stream and output hashes, see 'pipe --help' usage examples")
-                .long_about(concat!(
-                    "Reads a stream of 512x512 grayscale images and outputs their PDQ hashes.",
-                    "\n\n",
-                    "Usage examples with common tools:",
-                    "\n\n",
-                    " * Emit a single image, return the hash in ASCII hex format, prefix by the quality score, pad by a line feed:",
-                    "\n\n",
-                    "    >ffmpeg -loglevel error -hide_banner -i test-data/aaa-orig.jpg \\",
-                    "\n",
-                    "      -vf \"scale=512:512:force_original_aspect_ratio=disable\" \\",
-                    "\n",
-                    "      -frames:v 1 -pix_fmt gray8  -f rawvideo - | yume-pdq pipe -f q+hex+lf",
-                    "\n\n",
-                    "       Output: 100.000:58f8f0cee0f4a84f06370a32038f67f0b36e2ed596623e1d33e6b39c4e9c9b22",
-                    // ... rest of the long help text ...
-                ))
+                .long_about(
+r#"
+Reads a stream of 512x512 grayscale images and outputs their PDQ hashes.
+
+Usage examples with common tools:
+
+ * Emit a single image, return the hash in ASCII hex format, prefix by the quality score, pad by a line feed:
+
+    >ffmpeg -loglevel error -hide_banner -i test-data/aaa-orig.jpg \
+      -vf "scale=512:512:force_original_aspect_ratio=disable" \
+      -frames:v 1 -pix_fmt gray8  -f rawvideo - | yume-pdq pipe -f q+hex+lf
+
+       Output: 100.000:58f8f0cee0f4a84f06370a32038f67f0b36e2ed596623e1d33e6b39c4e9c9b22
+
+
+ * Process every frame of a video stream, return the hash in ASCII binary format with no padding in between frames: 
+
+   >ffmpeg -f lavfi -i testsrc=size=512x512:rate=1  -pix_fmt gray  -f rawvideo - | yume-pdq pipe -f bin
+
+       Output: <BINARY_HASH>, expect to see thousands of FPS reported by ffmpeg!
+
+ * Process an arbitrary list of images, return the hash in ASCII hex format, pad by a line feed:
+
+   > for i in (seq 1 1000); ln -s (realpath test-data/aaa-orig.jpg) /tmp/test/$i.jpg; end
+   >  time convert 'test-data/*' -resize 512x512! -colorspace gray -depth 8 gray:- \
+   >    | yume-pdq pipe -f 'hex+lf'
+
+       Output: d8f8f0cee0f4a84f06370a32038f67f0b36e2ed596621e1d33e6b39c4e9c9b22 (*1000 lines)
+       Executed in   26.01 secs    fish           external
+       usr time   47.76 secs    0.00 millis   47.76 secs
+       sys time    9.43 secs    2.77 millis    9.43 secs
+"#)
                 .arg(
                     Arg::new("input")
                         .short('i')

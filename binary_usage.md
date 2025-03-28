@@ -46,7 +46,7 @@ Usage examples with common tools:
        Output: 100.000:58f8f0cee0f4a84f06370a32038f67f0b36e2ed596623e1d33e6b39c4e9c9b22
 
 
- * Process every frame of a video stream, return the hash in raw binary format with no padding in between frames: 
+ * Process every frame of a video stream, return the hash in ASCII binary format with no padding in between frames: 
 
    >ffmpeg -f lavfi -i testsrc=size=512x512:rate=1  -pix_fmt gray  -f rawvideo - | yume-pdq pipe -f bin
 
