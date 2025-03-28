@@ -3,21 +3,24 @@ dct2d,scalar,116.22e-6,116.63e-6,117.06e-6,131.40e6,131.89e6,132.35e6
 dct2d,reference,116.50e-6,116.98e-6,117.52e-6,130.89e6,131.49e6,132.03e6
 dct2d,avx2,23.033e-6,23.110e-6,23.194e-6,663.19e6,665.60e6,667.81e6
 dct2d,avx512,18.385e-6,18.441e-6,18.498e-6,831.53e6,834.12e6,836.65e6
-jarosz_compress,reference,3.1373e-3,3.1526e-3,3.1693e-3,315.53e6,317.20e6,318.75e6
-jarosz_compress,scalar,569.39e-6,571.67e-6,574.03e-6,1.7012e9,1.7083e9,1.7151e9
-jarosz_compress,avx2,27.444e-6,27.559e-6,27.691e-6,35.266e9,35.435e9,35.583e9
+jarosz_compress,reference,3.4113e-3,3.4150e-3,3.4191e-3,292.47e6,292.83e6,293.14e6
+jarosz_compress,scalar,355.57e-6,355.83e-6,356.13e-6,2.7422e9,2.7445e9,2.7465e9
+jarosz_compress,avx2,51.283e-6,51.367e-6,51.459e-6,18.978e9,19.011e9,19.043e9
 quantize,scalar,1.8273e-6,1.9303e-6,2.0175e-6,484.04e6,505.91e6,534.43e6
 quantize,avx2,354.74e-9,380.21e-9,402.01e-9,2.3723e9,2.5083e9,2.6884e9
 sum_of_gradients,scalar,182.66e-12,183.29e-12,183.98e-12,5183.5e9,5203.1e9,5221.1e9
 sum_of_gradients,avx512,183.12e-12,183.68e-12,184.27e-12,5175.3e9,5192.2e9,5207.8e9
-hash_flip8,scalar,70.288e-9,70.556e-9,70.844e-9,430.77e6,432.53e6,434.18e6
-hash_flip8,avx2,70.317e-9,70.661e-9,71.042e-9,429.57e6,431.89e6,434.00e6
-hash_flip8,avx512,70.160e-9,70.401e-9,70.648e-9,431.97e6,433.48e6,434.97e6
-hash_diagflip,scalar,18.499e-9,18.577e-9,18.661e-9,1.5970e9,1.6042e9,1.6110e9
-hash,reference,3.3092e-3,3.3132e-3,3.3174e-3,301.44e6,301.82e6,302.19e6
-hash,scalar,496.19e-6,496.60e-6,497.05e-6,1.9647e9,1.9665e9,1.9681e9
-hash,avx2,47.902e-6,47.941e-6,47.980e-6,20.353e9,20.370e9,20.387e9
-hash,avx512,43.668e-6,43.684e-6,43.701e-6,22.347e9,22.355e9,22.363e9
+hash_f32,reference,3.5304e-3,3.5437e-3,3.5599e-3,280.91e6,282.19e6,283.26e6
+hash_f32,scalar,507.97e-6,509.01e-6,510.18e-6,1.9142e9,1.9186e9,1.9225e9
+hash_f32,avx2,73.088e-6,73.163e-6,73.252e-6,13.331e9,13.348e9,13.361e9
+hash_f32,avx512,68.408e-6,68.466e-6,68.530e-6,14.250e9,14.264e9,14.276e9
+hash_u8,scalar,918.28e-6,919.02e-6,919.88e-6,271.78e6,272.03e6,272.25e6
+hash_u8,avx2,79.443e-6,79.494e-6,79.543e-6,3.0693e9,3.0712e9,3.0731e9
+hash_u8,avx512,74.904e-6,74.995e-6,75.089e-6,3.2513e9,3.2554e9,3.2594e9
+hash_f32_1thread,reference,130.51e-3,130.58e-3,130.67e-3,367.35e6,367.58e6,367.80e6
+hash_f32_1thread,scalar,25.234e-3,25.263e-3,25.294e-3,1.8532e9,1.8555e9,1.8576e9
+hash_f32_1thread,avx2,130.51e-3,130.58e-3,130.67e-3,367.35e6,367.58e6,367.80e6
+hash_f32_1thread,avx512,130.51e-3,130.58e-3,130.67e-3,367.35e6,367.58e6,367.80e6
 hash_4threads,reference,31.135e-3,31.220e-3,31.327e-3,1.4963e9,1.5014e9,1.5056e9
 hash_4threads,scalar,6.4599e-3,6.4843e-3,6.5111e-3,7.1992e9,7.2289e9,7.2563e9
 hash_4threads,avx2,918.44e-6,920.94e-6,923.89e-6,50.736e9,50.899e9,51.038e9
@@ -26,3 +29,330 @@ hash_8threads,reference,16.659e-3,16.745e-3,16.845e-3,2.7827e9,2.7994e9,2.8138e9
 hash_8threads,scalar,3.6919e-3,3.7180e-3,3.7446e-3,12.518e9,12.608e9,12.697e9
 hash_8threads,avx2,643.74e-6,652.87e-6,662.26e-6,70.780e9,71.799e9,72.817e9
 hash_8threads,avx512,622.47e-6,630.66e-6,638.93e-6,73.365e9,74.327e9,75.304e9
+
+
+Benchmarking hash/f32/1 thread (rayon overhead control group)/reference: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 13.1s, or reduce sample count to 30.
+hash/f32/1 thread (rayon overhead control group)/reference
+                        time:   [130.51 ms 130.58 ms 130.67 ms]
+                        thrpt:  [367.35 MiB/s 367.58 MiB/s 367.80 MiB/s]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+hash/f32/1 thread (rayon overhead control group)/scalar
+                        time:   [25.234 ms 25.263 ms 25.294 ms]
+                        thrpt:  [1.8532 GiB/s 1.8555 GiB/s 1.8576 GiB/s]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+hash/f32/1 thread (rayon overhead control group)/avx2
+                        time:   [4.2295 ms 4.2426 ms 4.2563 ms]
+                        thrpt:  [11.013 GiB/s 11.049 GiB/s 11.083 GiB/s]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+hash/f32/1 thread (rayon overhead control group)/avx512
+                        time:   [4.0471 ms 4.0769 ms 4.1112 ms]
+                        thrpt:  [11.402 GiB/s 11.498 GiB/s 11.582 GiB/s]
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+
+hash/u8/1 thread (rayon overhead control group)/scalar
+                        time:   [44.305 ms 44.337 ms 44.371 ms]
+                        thrpt:  [270.45 MiB/s 270.65 MiB/s 270.85 MiB/s]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hash/u8/1 thread (rayon overhead control group)/avx2
+                        time:   [3.9291 ms 3.9346 ms 3.9405 ms]
+                        thrpt:  [2.9740 GiB/s 2.9784 GiB/s 2.9825 GiB/s]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+hash/u8/1 thread (rayon overhead control group)/avx512
+                        time:   [3.7167 ms 3.7244 ms 3.7326 ms]
+                        thrpt:  [3.1395 GiB/s 3.1465 GiB/s 3.1530 GiB/s]
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+
+Benchmarking hash/f32/2 threads/reference: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.6s, or reduce sample count to 70.
+hash/f32/2 threads/reference
+                        time:   [65.779 ms 65.878 ms 65.991 ms]
+                        thrpt:  [727.37 MiB/s 728.62 MiB/s 729.72 MiB/s]
+                 change:
+                        time:   [-0.5567% -0.2395% +0.0407%] (p = 0.13 > 0.05)
+                        thrpt:  [-0.0407% +0.2401% +0.5598%]
+                        No change in performance detected.
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+hash/f32/2 threads/scalar
+                        time:   [13.319 ms 13.567 ms 13.837 ms]
+                        thrpt:  [3.3876 GiB/s 3.4551 GiB/s 3.5194 GiB/s]
+                 change:
+                        time:   [+4.2623% +6.2228% +8.3695%] (p = 0.00 < 0.05)
+                        thrpt:  [-7.7231% -5.8582% -4.0881%]
+                        Performance has regressed.
+Found 19 outliers among 100 measurements (19.00%)
+  10 (10.00%) high mild
+  9 (9.00%) high severe
+hash/f32/2 threads/avx2 time:   [2.2084 ms 2.2403 ms 2.2763 ms]
+                        thrpt:  [20.593 GiB/s 20.924 GiB/s 21.226 GiB/s]
+                 change:
+                        time:   [+0.1873% +1.5953% +2.9859%] (p = 0.05 < 0.05)
+                        thrpt:  [-2.8993% -1.5703% -0.1869%]
+                        Change within noise threshold.
+Found 14 outliers among 100 measurements (14.00%)
+  3 (3.00%) high mild
+  11 (11.00%) high severe
+hash/f32/2 threads/avx512
+                        time:   [2.2236 ms 2.2810 ms 2.3448 ms]
+                        thrpt:  [19.991 GiB/s 20.550 GiB/s 21.081 GiB/s]
+                 change:
+                        time:   [+6.2808% +9.2738% +12.251%] (p = 0.00 < 0.05)
+                        thrpt:  [-10.914% -8.4867% -5.9097%]
+                        Performance has regressed.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+
+hash/u8/2 threads/scalar
+                        time:   [22.933 ms 23.025 ms 23.133 ms]
+                        thrpt:  [518.73 MiB/s 521.16 MiB/s 523.27 MiB/s]
+                 change:
+                        time:   [+0.3658% +0.8533% +1.3353%] (p = 0.00 < 0.05)
+                        thrpt:  [-1.3177% -0.8461% -0.3644%]
+                        Change within noise threshold.
+Found 7 outliers among 100 measurements (7.00%)
+  2 (2.00%) high mild
+  5 (5.00%) high severe
+hash/u8/2 threads/avx2  time:   [2.0905 ms 2.1337 ms 2.1896 ms]
+                        thrpt:  [5.3519 GiB/s 5.4922 GiB/s 5.6058 GiB/s]
+                 change:
+                        time:   [+2.2119% +4.1890% +7.1836%] (p = 0.00 < 0.05)
+                        thrpt:  [-6.7022% -4.0206% -2.1640%]
+                        Performance has regressed.
+Found 16 outliers among 100 measurements (16.00%)
+  3 (3.00%) high mild
+  13 (13.00%) high severe
+hash/u8/2 threads/avx512
+                        time:   [1.9283 ms 1.9334 ms 1.9389 ms]
+                        thrpt:  [6.0441 GiB/s 6.0613 GiB/s 6.0773 GiB/s]
+                 change:
+                        time:   [+0.0723% +0.4670% +0.8693%] (p = 0.02 < 0.05)
+                        thrpt:  [-0.8618% -0.4649% -0.0723%]
+                        Change within noise threshold.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+
+hash/f32/4 threads/reference
+                        time:   [34.435 ms 34.582 ms 34.738 ms]
+                        thrpt:  [1.3494 GiB/s 1.3555 GiB/s 1.3613 GiB/s]
+                 change:
+                        time:   [+1.1221% +1.5858% +2.0685%] (p = 0.00 < 0.05)
+                        thrpt:  [-2.0266% -1.5610% -1.1097%]
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  5 (5.00%) high mild
+hash/f32/4 threads/scalar
+                        time:   [6.6022 ms 6.6198 ms 6.6381 ms]
+                        thrpt:  [7.0615 GiB/s 7.0811 GiB/s 7.0999 GiB/s]
+                 change:
+                        time:   [+0.9075% +1.2798% +1.6450%] (p = 0.00 < 0.05)
+                        thrpt:  [-1.6184% -1.2636% -0.8993%]
+                        Change within noise threshold.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking hash/f32/4 threads/avx2: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.7s, enable flat sampling, or reduce sample count to 60.
+hash/f32/4 threads/avx2 time:   [1.1292 ms 1.1346 ms 1.1406 ms]
+                        thrpt:  [41.097 GiB/s 41.316 GiB/s 41.510 GiB/s]
+                 change:
+                        time:   [-0.4242% +1.0282% +2.3767%] (p = 0.15 > 0.05)
+                        thrpt:  [-2.3215% -1.0177% +0.4260%]
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking hash/f32/4 threads/avx512: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.4s, enable flat sampling, or reduce sample count to 60.
+hash/f32/4 threads/avx512
+                        time:   [1.0601 ms 1.0664 ms 1.0735 ms]
+                        thrpt:  [43.665 GiB/s 43.955 GiB/s 44.216 GiB/s]
+                 change:
+                        time:   [-1.9866% -0.4434% +1.1310%] (p = 0.59 > 0.05)
+                        thrpt:  [-1.1183% +0.4454% +2.0269%]
+                        No change in performance detected.
+Found 9 outliers among 100 measurements (9.00%)
+  4 (4.00%) high mild
+  5 (5.00%) high severe
+
+hash/u8/4 threads/scalar
+                        time:   [11.437 ms 11.461 ms 11.487 ms]
+                        thrpt:  [1.0202 GiB/s 1.0225 GiB/s 1.0246 GiB/s]
+                 change:
+                        time:   [-0.3317% -0.0300% +0.2748%] (p = 0.84 > 0.05)
+                        thrpt:  [-0.2741% +0.0300% +0.3328%]
+                        No change in performance detected.
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking hash/u8/4 threads/avx2: Warming up for 3.0000 s
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 5.2s, enable flat sampling, or reduce sample count to 60.
+hash/u8/4 threads/avx2  time:   [1.0295 ms 1.0320 ms 1.0347 ms]
+                        thrpt:  [11.325 GiB/s 11.355 GiB/s 11.383 GiB/s]
+                 change:
+                        time:   [-1.2144% -0.1763% +0.8726%] (p = 0.75 > 0.05)
+                        thrpt:  [-0.8651% +0.1766% +1.2293%]
+                        No change in performance detected.
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+hash/u8/4 threads/avx512
+                        time:   [1.0212 ms 1.0671 ms 1.1208 ms]
+                        thrpt:  [10.456 GiB/s 10.981 GiB/s 11.476 GiB/s]
+                 change:
+                        time:   [+2.5291% +4.8629% +7.5542%] (p = 0.00 < 0.05)
+                        thrpt:  [-7.0236% -4.6374% -2.4667%]
+                        Performance has regressed.
+Found 14 outliers among 100 measurements (14.00%)
+  4 (4.00%) high mild
+  10 (10.00%) high severe
+
+hash/f32/8 threads/reference
+                        time:   [17.920 ms 18.210 ms 18.540 ms]
+                        thrpt:  [2.5283 GiB/s 2.5741 GiB/s 2.6158 GiB/s]
+                 change:
+                        time:   [+3.3589% +4.8999% +7.1338%] (p = 0.00 < 0.05)
+                        thrpt:  [-6.6588% -4.6710% -3.2497%]
+                        Performance has regressed.
+Found 12 outliers among 100 measurements (12.00%)
+  5 (5.00%) high mild
+  7 (7.00%) high severe
+hash/f32/8 threads/scalar
+                        time:   [3.3921 ms 3.4188 ms 3.4583 ms]
+                        thrpt:  [13.554 GiB/s 13.711 GiB/s 13.819 GiB/s]
+                 change:
+                        time:   [-0.2939% +0.7063% +2.0056%] (p = 0.24 > 0.05)
+                        thrpt:  [-1.9662% -0.7014% +0.2948%]
+                        No change in performance detected.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+hash/f32/8 threads/avx2 time:   [616.29 µs 619.32 µs 622.62 µs]
+                        thrpt:  [75.287 GiB/s 75.687 GiB/s 76.059 GiB/s]
+                 change:
+                        time:   [-2.2678% -0.4222% +1.2868%] (p = 0.65 > 0.05)
+                        thrpt:  [-1.2705% +0.4240% +2.3204%]
+                        No change in performance detected.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+hash/f32/8 threads/avx512
+                        time:   [584.28 µs 587.98 µs 592.20 µs]
+                        thrpt:  [79.154 GiB/s 79.722 GiB/s 80.227 GiB/s]
+                 change:
+                        time:   [-0.6597% +1.4416% +3.7141%] (p = 0.21 > 0.05)
+                        thrpt:  [-3.5811% -1.4211% +0.6641%]
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  8 (8.00%) high mild
+  3 (3.00%) high severe
+
+hash/u8/8 threads/scalar
+                        time:   [5.8898 ms 5.9111 ms 5.9335 ms]
+                        thrpt:  [1.9750 GiB/s 1.9825 GiB/s 1.9897 GiB/s]
+                 change:
+                        time:   [-0.8243% -0.3044% +0.1739%] (p = 0.24 > 0.05)
+                        thrpt:  [-0.1736% +0.3053% +0.8311%]
+                        No change in performance detected.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+hash/u8/8 threads/avx2  time:   [547.44 µs 551.11 µs 555.40 µs]
+                        thrpt:  [21.100 GiB/s 21.264 GiB/s 21.406 GiB/s]
+                 change:
+                        time:   [-0.2983% +1.0155% +2.3881%] (p = 0.15 > 0.05)
+                        thrpt:  [-2.3324% -1.0052% +0.2992%]
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+hash/u8/8 threads/avx512
+                        time:   [528.11 µs 536.47 µs 545.62 µs]
+                        thrpt:  [21.478 GiB/s 21.844 GiB/s 22.190 GiB/s]
+                 change:
+                        time:   [+1.1260% +2.6224% +4.1498%] (p = 0.00 < 0.05)
+                        thrpt:  [-3.9844% -2.5554% -1.1135%]
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+hash/f32/16 threads/reference
+                        time:   [9.9280 ms 10.038 ms 10.148 ms]
+                        thrpt:  [4.6189 GiB/s 4.6697 GiB/s 4.7215 GiB/s]
+                 change:
+                        time:   [-1.0993% +0.4510% +2.1402%] (p = 0.58 > 0.05)
+                        thrpt:  [-2.0954% -0.4490% +1.1115%]
+                        No change in performance detected.
+hash/f32/16 threads/scalar
+                        time:   [2.3109 ms 2.3214 ms 2.3318 ms]
+                        thrpt:  [20.102 GiB/s 20.193 GiB/s 20.284 GiB/s]
+                 change:
+                        time:   [-0.9741% -0.2998% +0.3426%] (p = 0.38 > 0.05)
+                        thrpt:  [-0.3415% +0.3007% +0.9836%]
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+hash/f32/16 threads/avx2
+                        time:   [519.33 µs 524.72 µs 530.61 µs]
+                        thrpt:  [88.341 GiB/s 89.334 GiB/s 90.260 GiB/s]
+                 change:
+                        time:   [-2.4279% +0.1615% +2.8074%] (p = 0.91 > 0.05)
+                        thrpt:  [-2.7308% -0.1612% +2.4884%]
+                        No change in performance detected.
+Found 11 outliers among 100 measurements (11.00%)
+  1 (1.00%) low mild
+  4 (4.00%) high mild
+  6 (6.00%) high severe
+hash/f32/16 threads/avx512
+                        time:   [521.81 µs 544.81 µs 575.86 µs]
+                        thrpt:  [81.400 GiB/s 86.040 GiB/s 89.832 GiB/s]
+                 change:
+                        time:   [-0.8760% +2.7459% +6.9500%] (p = 0.18 > 0.05)
+                        thrpt:  [-6.4984% -2.6725% +0.8838%]
+                        No change in performance detected.
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+
+hash/u8/16 threads/scalar
+                        time:   [3.7270 ms 3.8537 ms 4.0128 ms]
+                        thrpt:  [2.9203 GiB/s 3.0409 GiB/s 3.1443 GiB/s]
+                 change:
+                        time:   [+2.4073% +5.8599% +10.094%] (p = 0.00 < 0.05)
+                        thrpt:  [-9.1684% -5.5355% -2.3507%]
+                        Performance has regressed.
+Found 16 outliers among 100 measurements (16.00%)
+  4 (4.00%) low mild
+  4 (4.00%) high mild
+  8 (8.00%) high severe
+hash/u8/16 threads/avx2 time:   [426.18 µs 430.26 µs 434.41 µs]
+                        thrpt:  [26.976 GiB/s 27.236 GiB/s 27.497 GiB/s]
+                 change:
+                        time:   [-2.5216% -0.4439% +1.5492%] (p = 0.67 > 0.05)
+                        thrpt:  [-1.5256% +0.4459% +2.5868%]
+                        No change in performance detected.
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+hash/u8/16 threads/avx512
+                        time:   [404.94 µs 409.48 µs 414.17 µs]
+                        thrpt:  [28.294 GiB/s 28.619 GiB/s 28.939 GiB/s]
+                 change:
+                        time:   [-3.7585% -1.7495% +0.2504%] (p = 0.10 > 0.05)
+                        thrpt:  [-0.2498% +1.7807% +3.9053%]
+                        No change in performance detected.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild

@@ -1,0 +1,85 @@
+machine,nt,time,throughput,kernel,repr                               
+xeongold-ddr4,NA,6514.1,153.41,reference,f32                                              
+xeongold-ddr4,NA,2939.2,340.23,scalar,f32                                                 
+xeongold-ddr4,NA,1942.0,514.94,avx2,f32                                                   
+xeongold-ddr4,NA,2064.7,484.33,avx512,f32                                                 
+xeongold-ddr4,NA,3488.9,71.655,scalar,u8                                                  
+xeongold-ddr4,NA,1827.4,136.81,avx2,u8                                                    
+xeongold-ddr4,NA,1940.3,128.85,avx512,u8                                                  
+xeongold-ddr4,1,315190,152.29,reference,f32                                               
+xeongold-ddr4,1,145250,330.47,scalar,f32                                                  
+xeongold-ddr4,1,94605,507.37,avx2,f32                                                     
+xeongold-ddr4,1,100300,478.56,avx512,f32                                                  
+xeongold-ddr4,1,168960,71.021,scalar,u8                                                   
+xeongold-ddr4,1,90210,133.02,avx2,u8                                                      
+xeongold-ddr4,1,93974,127.70,avx512,u8                                                    
+xeongold-ddr4,2,157190,305.37,reference,f32                                               
+xeongold-ddr4,2,72288,664.01,scalar,f32                                                   
+xeongold-ddr4,2,47916,1001.8,avx2,f32                                                     
+xeongold-ddr4,2,50216,955.86,avx512,f32                                                   
+xeongold-ddr4,2,85077,141.05,scalar,u8                                                    
+xeongold-ddr4,2,45066,266.28,avx2,u8                                                      
+xeongold-ddr4,2,47985,250.08,avx512,u8                                                    
+xeongold-ddr4,4,81690,587.58,reference,f32                                                
+xeongold-ddr4,4,37036,1.2657*1024,scalar,f32                                              
+xeongold-ddr4,4,23726,1.9757*1024,avx2,f32                                                
+xeongold-ddr4,4,25545,1.8350*1024,avx512,f32                                              
+xeongold-ddr4,4,43469,276.06,scalar,u8                                                    
+xeongold-ddr4,4,22813,526.02,avx2,u8                                                      
+xeongold-ddr4,4,24370,492.42,avx512,u8                                                    
+xeongold-ddr4,8,41627,1.1261*1024,reference,f32                                           
+xeongold-ddr4,8,19132,2.4500*1024,scalar,f32                                              
+xeongold-ddr4,8,12530,3.7411*1024,avx2,f32                                                
+xeongold-ddr4,8,13036,3.5958*1024,avx512,f32                                              
+xeongold-ddr4,8,22634,530.18,scalar,u8                                                    
+xeongold-ddr4,8,11954,1003.9,avx2,u8                                                      
+xeongold-ddr4,8,12128,989.43,avx512,u8                                                    
+xeongold-ddr4,16,22914,2.0457*1024,reference,f32                                          
+xeongold-ddr4,16,10431,4.4940*1024,scalar,f32                                             
+xeongold-ddr4,16,7066.9,6.6330*1024,avx2,f32                                              
+xeongold-ddr4,16,7186.9,6.5223*1024,avx512,f32                                            
+xeongold-ddr4,16,11947,1004.4,avx2,u8                                                     
+xeongold-ddr4,16,6608.1,1.7734*1024,avx2,u8                                               
+xeongold-ddr4,16,6582.8,1.7802*1024,avx512,u8                                             
+xeongold-ddr4,32,14733,3.1816*1024,reference,f32                                          
+xeongold-ddr4,32,6872.5,6.8206*1024,scalar,f32                                            
+xeongold-ddr4,32,4279.0,10.955*1024,avx2,f32                                              
+xeongold-ddr4,32,4551.9,10.298*1024,avx512,f32                                            
+xeongold-ddr4,32,7752.4,1.5116*1024,scalar,u8                                             
+xeongold-ddr4,32,4055.8,2.8894*1024,avx2,u8                                               
+xeongold-ddr4,32,4245.3,2.7604*1024,avx512,u8                                             
+7950x-ddr5,NA,3530.37,281.79,reference,f32                                             
+7950x-ddr5,NA,509.05,1.9168 * 1024,scalar,f32                                          
+7950x-ddr5,NA,73.1675,13.3395 * 1024,avx2,f32                                          
+7950x-ddr5,NA,68.468,14.257 * 1024,avx512,f32                                          
+7950x-ddr5,NA,919.06,272.0,scalar,u8                                                   
+7950x-ddr5,NA,79.4935,3.07025 * 1024,avx2,u8                                           
+7950x-ddr5,NA,75.042,3.25535 * 1024,avx512,u8   
+7950x-ddr5,1,130580,367.565,reference,f32                                              
+7950x-ddr5,1,25263.5,1.85435 * 1024,scalar,f32                                         
+7950x-ddr5,1,4242.45,11.049,avx2,f32                                                   
+7950x-ddr5,1,4076.95,11.54,avx512,f32                                                  
+7950x-ddr5,1,44337,270.65,scalar,u8                                                    
+7950x-ddr5,1,3934.8,2.97825 * 1024,avx2,u8                                             
+7950x-ddr5,1,3724.65,3.1453 * 1024,avx512,u8                                           
+7950x-ddr5,2,65884,728.045,reference,f32                                               
+7950x-ddr5,2,13543,3.45225 * 1024,scalar,f32                                           
+7950x-ddr5,2,2223.95,20.758 * 1024,avx2,f32                                            
+7950x-ddr5,2,2282.3,20.8155 * 1024,avx512,f32                                          
+7950x-ddr5,2,23079,521.965,scalar,u8                                                   
+7950x-ddr5,2,2112.15,5.49585 * 1024,avx2,u8                                            
+7950x-ddr5,2,1931.35,6.0692 * 1024,avx512,u8                                           
+7950x-ddr5,4,34759.5,1.35535 * 1024,reference,f32                                      
+7950x-ddr5,4,6619.65,7.0907 * 1024,scalar,f32                                          
+7950x-ddr5,4,1136.9,41.3135 * 1024,avx2,f32                                            
+7950x-ddr5,4,1066.65,44.0855 * 1024,avx512,f32                                         
+7950x-ddr5,4,11461.5,1.02135 * 1024,scalar,u8                                          
+7950x-ddr5,4,1033.35,11.3685 * 1024,avx2,u8                                            
+7950x-ddr5,4,1044.05,11.228 * 1024,avx512,u8                                           
+7950x-ddr5,8,18415,2.57115 * 1024,reference,f32                                        
+7950x-ddr5,8,3409.2,13.745 * 1024,scalar,f32                                           
+7950x-ddr5,8,620.955,75.673 * 1024,avx2,f32                                            
+7950x-ddr5,8,588.14,79.938 * 1024,avx512,f32                                           
+7950x-ddr5,8,5910.25,1.9811 * 1024,scalar,u8                                           
+7950x-ddr5,8,551.275,21.335 * 1024,avx2,u8                                             
+7950x-ddr5,8,537.295,21.664 * 1024,avx512,u8
