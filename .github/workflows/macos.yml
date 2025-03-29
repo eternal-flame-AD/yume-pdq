@@ -1,0 +1,36 @@
+
+name: Build macOS Distributable (evaluation only)
+
+on:
+    push:
+
+jobs:
+    build:
+        runs-on: macos-latest
+        steps:
+        - uses: actions/checkout@v4
+
+        - name: Install nightly toolchain and Apple target
+          uses: dtolnay/rust-toolchain@nightly
+          with:
+            components: rust-src
+            targets: x86_64-apple-darwin
+
+        - name: Build
+          run: |
+            mkdir -p ci-release
+            # portable simd
+            RUSTFLAGS="-Ctarget-feature=+neon,+sve,+sve2" cargo build --release --bin yume-pdq --features "cli portable-simd"
+            cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-portable-simd
+
+            # scalar
+            cargo build --release --bin yume-pdq --features "cli"
+            cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-scalar
+
+
+        - name: Publish Artifacts
+          uses: actions/upload-artifact@v4
+          with:
+            name: artifacts-macos
+            path: ci-release/*
+            retention-days: 14
