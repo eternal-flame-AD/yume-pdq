@@ -94,7 +94,7 @@ impl<const N: usize> Debug for PortableSimdF32KernelIIdent<N> {
 
 impl<const N: usize> Display for PortableSimdF32KernelIIdent<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "portable-simd (guided vectorization)")
+        f.write_str("portable-simd (guided vectorization)")
     }
 }
 
