@@ -54,7 +54,7 @@ fn build_cli() -> Command {
 r#"
 A high-performance implementation of the PDQ perceptual image hashing algorithm. Supports various input/output formats and hardware acceleration.
 
-This yume-pdq kernel has AVX-512 yumemi power.
+"#, env!("TARGET_SPECIFIC_CLI_MESSAGE"), r#"
 
 Build Facts:
   Version: "#,env!("CARGO_PKG_VERSION"),r#"
@@ -568,12 +568,16 @@ fn main() {
                 eprintln!("Failed to get core IDs");
             }
         }
-        #[cfg(target_arch = "x86_64")]
         Some(("vectorization-info", _)) => {
             println!("=== Feature flag infomation ===\n");
             println!(
                 "  Capability of this binary: {}",
                 env!("TARGET_SPECIFIC_CLI_MESSAGE")
+            );
+
+            println!(
+                "  Supported CPU features: {}",
+                env!("BUILD_CFG_TARGET_FEATURES")
             );
 
             println!("\n=== Runtime Routing Infomation ===\n");
@@ -587,15 +591,6 @@ fn main() {
             println!("  Runtime decision details: {:?}", ident);
             println!();
             println!("  Router type: {}", type_name_of(&kernel));
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        Some(("vectorization-info", _)) => {
-            eprintln!(
-                "Vectorization info is currently only available on x86_64. ARM NEON support is planned."
-            );
-
-            let kernel = FallbackKernel::default();
-            println!("Router type: {}", type_name_of(&kernel));
         }
         Some(("random-stream", _)) => {
             use rand::RngCore;

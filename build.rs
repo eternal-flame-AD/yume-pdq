@@ -400,17 +400,37 @@ fn main() {
 
     let target_features = target_features.split(',').collect::<Vec<_>>();
 
+    #[allow(unused_assignments)]
     let mut target_specific_cli_message = "This yume-pdq kernel has no vectorized superpowers.";
 
+    #[cfg(target_arch = "x86_64")]
+    #[allow(unused_assignments)]
     if target_features.contains(&"avx2") && target_features.contains(&"fma") {
         target_specific_cli_message = "This yume-pdq kernel has AVX2 yumemi power.";
     }
 
-    #[cfg(feature = "avx512")]
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[allow(unused_assignments)]
     {
         if target_features.contains(&"avx512f") {
             target_specific_cli_message = "This yume-pdq kernel has AVX-512 yumemi power.";
         }
+    }
+
+    #[cfg(all(not(target_arch = "x86_64"), feature = "portable-simd"))]
+    #[allow(unused_assignments)]
+    {
+        target_specific_cli_message = "This yume-pdq kernel uses LLVM-IR guided SIMD (portable-simd). Check the supported CPU features for your vectorization backend.";
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        feature = "portable-simd",
+        not(feature = "prefer-x86-intrinsics")
+    ))]
+    #[allow(unused_assignments)]
+    {
+        target_specific_cli_message = "This yume-pdq kernel uses LLVM-IR guided SIMD (portable-simd). Check the supported CPU features for your vectorization backend.";
     }
 
     println!(
