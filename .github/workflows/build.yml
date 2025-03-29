@@ -12,6 +12,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Dump /proc/cpuinfo
+      run: |
+        cat /proc/cpuinfo
+
     - name: Install ImageMagick
       run: |
         sudo apt-get update
@@ -28,7 +32,7 @@ jobs:
         components: rust-src
         targets: x86_64-unknown-linux-gnu
 
-    - name: Build GNU targets
+    - name: Build and Unit Test GNU targets
       run: |
         # Portable SIMD SSE, unit test then build library
         RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Cdebug-assertions=yes" \

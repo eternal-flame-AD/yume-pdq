@@ -22,7 +22,7 @@ jobs:
             components: rust-src
             targets: x86_64-apple-darwin
 
-        - name: Build Binary
+        - name: Build and Unit Test Binary
           run: |
             mkdir -p ci-release
             # portable simd neon

@@ -32,7 +32,7 @@ Parallelize well up to the memory bandwidth limit.
 
 Not bit-identical to the reference implementation.
 
-Hand-written SIMD is unsafe and you shouldn't trust me, so I provide backwards CFI (LLVM SafeStack) and forward CFI (LLVM CFI) hardened-builds (marked with `-cfi` suffix in release binaries) thanks to a zero-runtime dependency policy on library builds and minimal runtime dependencies on binaries.
+Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves do not have data-dependent jumps but to mitigate data-only exploits I provide backwards CFI (LLVM SafeStack) and forward CFI (LLVM CFI) hardened-builds (marked with `-cfi` suffix in release binaries) thanks to a zero-runtime dependency policy on library builds and minimal runtime dependencies on binaries.
 
 No-std support.
 
@@ -40,9 +40,18 @@ No-std support.
 
 We provide pre-built binaries, shared objects, and static libraries for Linux, macOS, and Windows, currently for these combinations:
 
-- Linux: x86_64 sse4.2/avx2/avx512
-- macOS: aarch64 neon (I don't have such as system, it is only end-to-end tested to produce equivalent hashes on GitHub Actions, your mileage may vary)
-- Windows: x86_64 sse4.2/avx2/avx512
+- Linux: 
+  - x86_64 sse4.2_portable_simd/avx2_intrinsic/avx2_portable_simd 
+    - statically linked with musl 
+    - each also has an accompanying CFI-hardened version linked with glibc
+- macOS: 
+  - aarch64 neon 
+    - end-to-end tested on GitHub Actions but I don't have a real hardware to test on, your mileage may vary
+- Windows: 
+  - x86_64 sse4.2_portable_simd/avx2_intrinsic/avx2_portable_simd
+    - cross compiled using gnu toolchain
+    - Not end-to-end tested on CI but built using identical code to Linux builds
+    - No OS-specific conditional compilation used
 
 You can download the binaries from the [GitHub release page](https://github.com/eternal-flame-AD/yume-pdq/releases).
 
