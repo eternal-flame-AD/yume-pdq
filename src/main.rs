@@ -569,7 +569,7 @@ fn main() {
             }
         }
         Some(("vectorization-info", _)) => {
-            println!("=== Feature flag infomation ===\n");
+            println!("=== Feature flag information ===\n");
             println!(
                 "  Capability of this binary: {}",
                 env!("TARGET_SPECIFIC_CLI_MESSAGE")
@@ -580,7 +580,7 @@ fn main() {
                 env!("BUILD_CFG_TARGET_FEATURES")
             );
 
-            println!("\n=== Runtime Routing Infomation ===\n");
+            println!("\n=== Runtime Routing Information ===\n");
 
             let kernel = yume_pdq::kernel::smart_kernel();
 

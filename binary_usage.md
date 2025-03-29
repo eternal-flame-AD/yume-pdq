@@ -12,12 +12,12 @@ AVX512F: Auto-vectorization only, optimized kernel disabled by feature flag
 
 > RUSTFLAGS="-Ctarget-cpu=native" cargo run --release --features "cli" -- vectorization-info
 
-=== Feature flag infomation ===
+=== Feature flag information ===
 
   Capability of this binary: This yume-pdq kernel has AVX2 yumemi power.
   Supported CPU features: avx,avx2,fma,fxsr,sse,sse2,sse3,sse4.1,sse4.2,ssse3,x87
 
-=== Runtime Routing Infomation ===
+=== Runtime Routing Information ===
 
   Runtime decision: avx2_f32
 
@@ -29,12 +29,12 @@ AVX512F: Auto-vectorization only, optimized kernel disabled by feature flag
 Example response on aarch64 sve2:
 
 ```
-=== Feature flag infomation ===
+=== Feature flag information ===
 
   Capability of this binary: This yume-pdq kernel uses LLVM-IR guided SIMD (portable-simd). Check the supported CPU features for your vectorization backend.
   Supported CPU features: neon,sve,sve2
 
-=== Runtime Routing Infomation ===
+=== Runtime Routing Information ===
 
   Runtime decision: portable-simd (guided vectorization)
 
