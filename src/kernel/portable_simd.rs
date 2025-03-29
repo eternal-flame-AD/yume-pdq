@@ -143,17 +143,13 @@ where
                 for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
                     #[cfg(debug_assertions)]
                     {
-                        // we intentionally read out of bounds in the last iteration
-                        // but add a check as a test
-                        if outi != 126 || outj != 126 {
-                            let offset_ub = (in_i + di) * 512 + in_j + 8;
-                            if offset_ub > 512 * 512 {
-                                panic!(
-                                    "offset out of bounds: {} is invalid, last valid offset is {}",
-                                    offset_ub,
-                                    512 * 512 - 1
-                                );
-                            }
+                        let offset_ub = (in_i + di) * 512 + in_j + 8;
+                        if offset_ub > 512 * 512 {
+                            panic!(
+                                "offset out of bounds: {} is invalid, last valid offset is {}",
+                                offset_ub,
+                                512 * 512 - 1
+                            );
                         }
                     }
 
