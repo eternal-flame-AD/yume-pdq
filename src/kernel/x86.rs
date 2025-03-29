@@ -238,9 +238,22 @@ impl Avx2F32Kernel {
 
                     do_loop!(128);
 
+                    let sumk0 = sumk[0];
+                    let sumk1 = sumk[1];
+
+                    let sumk0_not_nan_mask = _mm256_cmp_ps(sumk0, _mm256_setzero_ps(), _CMP_ORD_S);
+
+                    let sumk0_nan_zeroed =
+                        _mm256_blendv_ps(_mm256_setzero_ps(), sumk0, sumk0_not_nan_mask);
+
+                    let sumk1_not_nan_mask = _mm256_cmp_ps(sumk1, _mm256_setzero_ps(), _CMP_ORD_S);
+
+                    let sumk1_nan_zeroed =
+                        _mm256_blendv_ps(_mm256_setzero_ps(), sumk1, sumk1_not_nan_mask);
+
                     _mm256_storeu_ps(
                         tmp.as_mut_ptr().add(j_by_8),
-                        _mm256_add_ps(sumk[0], sumk[1]),
+                        _mm256_add_ps(sumk0_nan_zeroed, sumk1_nan_zeroed),
                     );
                 }
 
@@ -309,14 +322,47 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
         // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
         let mut out_buffer = Align32([0.0; 8]);
 
+        // little endian:                               [7] [6] [5] [4] [3] [2] [1] [0]
+        // intended index: [-1, 0, 1, 2, 3, 4, 5, 6] -> [0,  1,  2,  3,  4,  5,  6,  7]
+        // the last one is not important (padded into zero by FMA)
+        let shiftl1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
+
         for outi in 0..127 {
             let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
             for outj in 0..127 {
                 let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                 let mut sum = _mm256_setzero_ps();
                 for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
-                    let buffer =
-                        _mm256_loadu_ps(buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j));
+                    let mut offset = (in_i + di) * 512 + in_j;
+
+                    // rewind one element to avoid out of bounds access
+                    if di == 6 && outi == 126 && outj == 126 {
+                        offset -= 1;
+                    }
+
+                    #[cfg(debug_assertions)]
+                    {
+                        if offset > 512 * 512 - 8 {
+                            panic!(
+                                "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
+                                offset,
+                                512 * 512 - 8,
+                                in_i,
+                                in_j,
+                                di,
+                                outi,
+                                outj
+                            );
+                        }
+                    }
+
+                    let mut buffer = _mm256_loadu_ps(buffer.flatten().as_ptr().add(offset));
+
+                    // shift back one element
+                    if di == 6 && outi == 126 && outj == 126 {
+                        buffer = _mm256_permutevar8x32_ps(buffer, shiftl1);
+                    }
+
                     let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
                     sum = _mm256_fmadd_ps(buffer, weights, sum);
                 }
@@ -455,7 +501,7 @@ impl Kernel for Avx2F32Kernel {
             // 6 -> (0, 3.984375)
             // 7 -> (0, 1.9921875) at worst off by 1, and with a more educated guess it should be almost impossible to happen
             // 8 -> (0, 0.99609375) perfect thresholding
-            for _iter in 0..8 {
+            for _iter in 0..9 {
                 let guess_v = _mm256_set1_ps(guess);
                 let mut resid_gt_count_v = _mm256_setzero_ps();
                 let mut resid_lt_count_v = _mm256_setzero_ps();
@@ -854,7 +900,18 @@ impl Kernel for Avx512F32Kernel {
 
                     do_loop!(128);
 
-                    let sumk = _mm512_add_ps(sumks[0], sumks[1]);
+                    let sumk0 = sumks[0];
+                    let sumk1 = sumks[1];
+
+                    let sumk0_nan_mask = _mm512_cmp_ps_mask(sumk0, _mm512_setzero_ps(), _CMP_ORD_S);
+                    let sumk1_nan_mask = _mm512_cmp_ps_mask(sumk1, _mm512_setzero_ps(), _CMP_ORD_S);
+
+                    let sumk0_nan_zeroed =
+                        _mm512_mask_blend_ps(sumk0_nan_mask, _mm512_setzero_ps(), sumk0);
+                    let sumk1_nan_zeroed =
+                        _mm512_mask_blend_ps(sumk1_nan_mask, _mm512_setzero_ps(), sumk1);
+
+                    let sumk = _mm512_add_ps(sumk0_nan_zeroed, sumk1_nan_zeroed);
 
                     _mm512_storeu_ps(tmp.as_mut_ptr().add(j_by_16), sumk);
                 }
@@ -912,6 +969,21 @@ mod tests {
     use crate::alignment::Align32;
 
     use super::*;
+
+    #[test]
+    fn test_avx2_shift_elements_left() {
+        // test the rewinding paradigm
+        unsafe {
+            // we have rewound the buffer pointer by 1 element, so 0.0 should be get rid of, NAN is out of bounds
+            let fake_buffer = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, f32::NAN];
+            let mut buffer = _mm256_loadu_ps(fake_buffer.as_ptr());
+            let shiftr1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
+            buffer = _mm256_permutevar8x32_ps(buffer, shiftr1);
+            let mut read = [0.0; 8];
+            _mm256_storeu_ps(read.as_mut_ptr(), buffer);
+            assert_eq!(read, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 7.0]);
+        }
+    }
 
     #[test]
     fn test_avx2_horizontal_max_min_sum_ps() {

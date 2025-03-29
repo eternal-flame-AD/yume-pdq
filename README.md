@@ -3,13 +3,17 @@
 [![Builds](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/yume-pdq/build.yml?branch=main&label=Builds)](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/build.yml)
 [![docs.rs](https://img.shields.io/docsrs/yume-pdq)](https://docs.rs/yume-pdq/)
 
-A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm that prioritizes throughput over precision.
+A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm that prioritizes throughput over precision, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only).
 
 ## Table of Contents
 
 - [yume-pdq](#yume-pdq)
   - [Table of Contents](#table-of-contents)
   - [Design Goals](#design-goals)
+  - [System Requirements](#system-requirements)
+    - [Building](#building)
+    - [Execution](#execution)
+  - [Releases](#releases)
   - [Pipeline Overview](#pipeline-overview)
   - [Binary usage](#binary-usage)
   - [FFI (C/Python) usage](#ffi-cpython-usage)
@@ -31,21 +35,53 @@ Parallelize well up to the memory bandwidth limit.
 
 Not bit-identical to the reference implementation.
 
-Zero dependencies in the final binary (including statically linked crates).
+Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves are written with consideration to minimize possible issues by:
+  -  not having data-dependent jumps or data-dependent indexing
+  -  Add debug time bound assertions to catch SIMD reading out of bounds at test time
+  -  As defense-in-depth and to mitigate data-only exploits I provide backwards CFI (LLVM SafeStack) and forward CFI (LLVM CFI) hardened-builds (marked with `-cfi` suffix in release binaries) thanks to a zero-runtime dependency policy on library builds and minimal runtime dependencies on binaries. They affect performance by <10% when used in isolation due to the kernel having CFI-required jumps.
 
 No-std support.
+
+## System Requirements
+
+### Building
+
+- Rust toolchain (2024 edition or newer (1.85.0 or newer))
+- To build for AVX2, you can use any Rust channel and only `RUSTFLAGS="-Ctarget-feature=+avx2,+fma"` is required.
+- To build for AVX512, you need a nightly toolchain, and your build platform must also have AVX512, and `--features avx512`, and `RUSTFLAGS="-Ctarget-feature=+avx512f"` is required.
+- To build for portable-simd, you need a nightly toolchain, and `--features portable-simd` is required.
+
+### Execution
+
+- A CPU that is the same ISA as the binary (of course)
+- The portable-simd kernel is adaptive to your platform architecture and falls back to scalar instructions if necessary, I have tested on Apple Silicon (NEON) and Google Pixel 9 Pro (SVE2), both results in 4x+ speedup over the generic auto-vectorized scalar kernel.
+- To use f32x8 AVX2 kernel, you need an x86_64 CPU with AVX2 and FMA support
+- To use f32x16 AVX512 kernel, you need an x86_64 CPU with AVX512F support
+ 
+## Releases
+
+We provide pre-built binaries, shared objects, and static libraries for Linux, macOS, and Windows, currently for these combinations:
+
+- Linux: 
+  - x86_64 sse4.2_portable_simd/avx2_intrinsic/avx2_portable_simd 
+    - statically linked with musl 
+    - each also has an accompanying CFI-hardened version linked with glibc
+- MacOS (not part of official release due to lack of hardware, only available as [per-build artifacts](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/macos.yml))
+  - aarch64 neon 
+    - end-to-end tested on GitHub Actions
+- Windows: 
+  - x86_64 sse4.2_portable_simd/avx2_intrinsic/avx2_portable_simd
+    - cross compiled using gnu toolchain
+    - Not end-to-end tested on CI but built using identical code to Linux builds
+    - No OS-specific conditional compilation used
+
+You can download the binaries from the [GitHub release page](https://github.com/eternal-flame-AD/yume-pdq/releases).
 
 ## Pipeline Overview
 
 ![Pipeline Overview](pipeline_overview.png)
 
 ## Binary usage
-
-Prerequisites:
-- Rust toolchain (2024 edition or newer (1.85.0 or newer))
-- A CPU that is supported by the Rust toolchain (of course)
-- To use f32x8 SIMD kernel, you need an x86_64 CPU with AVX2 and FMA support
-- To use f32x16 SIMD kernel, you need an x86_64 CPU with AVX512F support (usually every single AVX512 CPU supports this)
 
 To save cloning this repo if you just want a published version (check on [crates.io](https://crates.io/crates/yume-pdq)), replace `cargo build --release` with `cargo install yume-pdq[@<version>]`.
 
@@ -79,9 +115,9 @@ This library can be built as a shared object that can be used by C/Python applic
 
 Currently there is only one exported symbol.
 
-See [integration/c.c](integration/c.c) for an example of how to use this library from C.
+See [integration/dummy.c](integration/dummy.c) for an example of how to use this library from C.
 
-See [integration/python.py](integration/python.py) for an example of how to use this library from Python.
+See [integration/hash.py](integration/hash.py) for an example of how to use this library from Python.
 
 You can download a pre-built AVX2 shared object from GitHub release artifacts but I recommend building it for your specific machine for best assurance that it would work and performance.
 
@@ -124,11 +160,15 @@ ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=512x512:rate=1  -pi
 
 Finally each kernel is tested against both sources. FPS was collected by running `yume-pdq pipe --stats` and recording the output.
 
-| Vectorization | Random Source | FFMPEG SMPTE |
-| ------------- | ------------- | ------------ |
-| AVX512        | 7900 fps      | 4050 fps     |
-| AVX2          | 7100 fps      | 4100 fps     |
-| Scalar        | 1600 fps      | 1500 fps     |
+| Vectorization                               | Random Source | FFMPEG SMPTE |
+| ------------------------------------------- | ------------- | ------------ |
+| AVX512                                      | 7900 fps      | 4050 fps     |
+| AVX2                                        | 7100 fps      | 4100 fps     |
+| Scalar Auto Vectorized                      | 1600 fps      | 1500 fps     |
+| Google Pixel 9 Pro (SVE2 by portable-simd)  | 1478/255 fps  | N/A          |
+| Google Pixel 9 Pro (scalar auto vectorized) | 220/90 fps    | N/A          |
+
+* Smartphone SoCs have high performance cores and power-efficient cores, Android throttles heavy workload on power-efficient cores quickly so there are two numbers for burst and sustained performance.
 
 AVX2 was able to saturate the speed FFMPEG can generate SMPTE bars.
 
@@ -168,6 +208,8 @@ The accuracy was done by writing unit tests that do pairwise comparison with eit
 Note:
 
 - higher distance to the `pdqhash` library is expected as they have mandatory preprocessing steps that cannot be slipped by the exposed API. The "reference" implementation is a more faithful pairwise comparison.
+
+- Each push and tag on GitHub Actions runs this exact test suite on all Linux and MacOS builds, you can refer to the logs for that specific commit/tag to verify.
 
 - the official "10 bit is correct" threshold is based on real image test vectors, not anime or drawn images, and certainly not terminal screenshots.
   the reason you see the official test vector have much better precision is because real photos have smoother edges, and JPEG compression is also based on DCT transformation which make the frequency domain information more pronounced (see the code example below to help visualize this). However animated images and neofetch screenshots have sharp and sharper edges all throughout the image, which "blurs" the hash and creates more "ambiguous" bits.

@@ -35,14 +35,14 @@ use generic_array::{
     sequence::{Flatten, GenericSequence},
     typenum::{B1, U4, Unsigned},
 };
+#[allow(unused_imports)]
 use yume_pdq::{
     GenericArray, PDQHash, PDQHashF,
     alignment::Align32,
     kernel::{
-        DefaultKernelPadXYTo128, Kernel,
+        FallbackKernel, Kernel,
         router::KernelRouter,
         type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
-        x86::Avx2F32Kernel,
     },
     lut_utils,
 };
@@ -54,7 +54,7 @@ fn build_cli() -> Command {
 r#"
 A high-performance implementation of the PDQ perceptual image hashing algorithm. Supports various input/output formats and hardware acceleration.
 
-This yume-pdq kernel has AVX-512 yumemi power.
+"#, env!("TARGET_SPECIFIC_CLI_MESSAGE"), r#"
 
 Build Facts:
   Version: "#,env!("CARGO_PKG_VERSION"),r#"
@@ -550,24 +550,6 @@ fn open_writer(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn x86_64_new_kernel() -> impl Kernel<
-    RequiredHardwareFeature = impl EvaluateHardwareFeature<EnabledStatic = B1>,
-    OutputDimension = impl DivisibleBy8
-                      + SquareOf<Output = impl ArrayLength + Div<U4, Output = impl ArrayLength>>,
-    InternalFloat = f32,
-> {
-    #[cfg(feature = "avx512")]
-    {
-        KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
-            .layer_on_top(yume_pdq::kernel::x86::Avx512F32Kernel)
-    }
-    #[cfg(not(feature = "avx512"))]
-    {
-        KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
-    }
-}
-
 fn type_name_of<T>(_: &T) -> &'static str {
     std::any::type_name::<T>()
 }
@@ -586,17 +568,21 @@ fn main() {
                 eprintln!("Failed to get core IDs");
             }
         }
-        #[cfg(target_arch = "x86_64")]
         Some(("vectorization-info", _)) => {
-            println!("=== Feature flag infomation ===\n");
+            println!("=== Feature flag information ===\n");
             println!(
                 "  Capability of this binary: {}",
                 env!("TARGET_SPECIFIC_CLI_MESSAGE")
             );
 
-            println!("\n=== Runtime Routing Infomation ===\n");
+            println!(
+                "  Supported CPU features: {}",
+                env!("BUILD_CFG_TARGET_FEATURES")
+            );
 
-            let kernel = x86_64_new_kernel();
+            println!("\n=== Runtime Routing Information ===\n");
+
+            let kernel = yume_pdq::kernel::smart_kernel();
 
             let ident = kernel.ident();
 
@@ -605,15 +591,6 @@ fn main() {
             println!("  Runtime decision details: {:?}", ident);
             println!();
             println!("  Router type: {}", type_name_of(&kernel));
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        Some(("vectorization-info", _)) => {
-            eprintln!(
-                "Vectorization info is currently only available on x86_64. ARM NEON support is planned."
-            );
-
-            let kernel = kernel::DefaultKernel();
-            println!("Router type: {}", type_name_of(&kernel));
         }
         Some(("random-stream", _)) => {
             use rand::RngCore;
@@ -640,11 +617,12 @@ fn main() {
             let arg_stats = sub_matches.get_flag("stats");
             let arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
 
-            #[cfg(target_arch = "x86_64")]
-            let (kernel0, kernel1) = { (x86_64_new_kernel(), x86_64_new_kernel()) };
-
-            #[cfg(not(target_arch = "x86_64"))]
-            let (kernel0, kernel1) = (kernel::DefaultKernel(), kernel::DefaultKernel());
+            let (kernel0, kernel1) = {
+                (
+                    yume_pdq::kernel::smart_kernel(),
+                    yume_pdq::kernel::smart_kernel(),
+                )
+            };
 
             let reader = open_reader(&arg_input).unwrap();
             let writer = open_writer(&arg_output, arg_output_buffer).unwrap();

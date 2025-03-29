@@ -12,19 +12,35 @@ AVX512F: Auto-vectorization only, optimized kernel disabled by feature flag
 
 > RUSTFLAGS="-Ctarget-cpu=native" cargo run --release --features "cli" -- vectorization-info
 
-Capability of this binary: This yume-pdq kernel has AVX2 yumemi power.
+=== Feature flag information ===
 
-On your processor, this build can use the following features:
-AVX2: Yes
-AVX512F: Auto-vectorization only, optimized kernel disabled by feature flag
+  Capability of this binary: This yume-pdq kernel has AVX2 yumemi power.
+  Supported CPU features: avx,avx2,fma,fxsr,sse,sse2,sse3,sse4.1,sse4.2,ssse3,x87
 
-> RUSTFLAGS="-Ctarget-cpu=native" cargo run --release --features "cli avx512" -- vectorization-info
+=== Runtime Routing Information ===
 
-Capability of this binary: This yume-pdq kernel has AVX-512 yumemi power.
+  Runtime decision: avx2_f32
 
-On your processor, this build can use the following features:
-AVX2: Detected but this build uses AVX512 kernels
-AVX512F: Yes
+  Runtime decision details: FallbackIdent(decision: using preferred "avx2_f32", fallback was "default_scalar_autovectorized_f32")
+
+  Router type: yume_pdq::kernel::router::KernelRouter<yume_pdq::kernel::x86::Avx2F32Kernel, yume_pdq::kernel::DefaultKernel<typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>, typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>>>
+```
+
+Example response on aarch64 sve2:
+
+```
+=== Feature flag information ===
+
+  Capability of this binary: This yume-pdq kernel uses LLVM-IR guided SIMD (portable-simd). Check the supported CPU features for your vectorization backend.
+  Supported CPU features: neon,sve,sve2
+
+=== Runtime Routing Information ===
+
+  Runtime decision: portable-simd (guided vectorization)
+
+  Runtime decision details: PortableSimd<f32x8>
+
+  Router type: yume_pdq::kernel::portable_simd::PortableSimdF32Kernel<8>
 ```
 
 ### Pipeline Processing

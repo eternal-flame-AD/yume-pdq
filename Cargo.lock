@@ -1641,7 +1641,7 @@ dependencies = [
 
 [[package]]
 name = "yume-pdq"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "clap",
  "const-default",

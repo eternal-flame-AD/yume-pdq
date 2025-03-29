@@ -1,6 +1,6 @@
 [package]
 name = "yume-pdq"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2024"
 authors = ["Yumechi <yume@yumechi.jp>"]
 keywords = ["pdq", "perceptual", "NCMEC", "similarity"]
@@ -58,6 +58,9 @@ avx512 = []
 ffi = ["std"]
 reference-rug = ["std", "dep:rug"]
 unstable = []
+portable-simd = []
+portable-simd-fma = ["portable-simd", "std"]
+prefer-x86-intrinsics = []
 lut-utils = []
 cli = ["std", "dep:clap", "dep:rand", "lut-utils"]
 hpc = ["std", "dep:core_affinity"]

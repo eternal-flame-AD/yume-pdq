@@ -5,6 +5,7 @@
         "reference-rug",
         "cli",
         "unstable",
+        "portable-simd",
         "ffi"
     ],
     "psi-header.config": {

@@ -21,6 +21,7 @@
  */
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 #![cfg_attr(feature = "avx512", feature(stdarch_x86_avx512))]
+#![cfg_attr(feature = "portable-simd", feature(portable_simd))]
 #![warn(missing_docs, clippy::pedantic)]
 
 pub use const_default::{self, ConstDefault};
@@ -313,7 +314,13 @@ mod tests {
                 output_expected.1,
                 quality
             );
-            assert!(distance <= 31);
+
+            // this is demo "bad" picture for hashing, highly malleable output is expected
+            // when there is any non-prescribed preprocessing happening
+            if name != "neofetch.png" {
+                // half of the matching threshold
+                assert!(distance <= 16);
+            }
         }
     }
 
@@ -525,6 +532,14 @@ mod tests {
     #[test]
     fn test_hash_impl_base() {
         let mut kernel = kernel::DefaultKernelNoPadding::default();
+        test_hash_impl_lib(&mut kernel);
+        test_hash_impl_ref(&mut kernel);
+    }
+
+    #[test]
+    #[cfg(feature = "portable-simd")]
+    fn test_hash_impl_portable_simd() {
+        let mut kernel = kernel::portable_simd::PortableSimdF32Kernel::<8>;
         test_hash_impl_lib(&mut kernel);
         test_hash_impl_ref(&mut kernel);
     }
