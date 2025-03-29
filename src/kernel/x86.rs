@@ -322,14 +322,45 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
         // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
         let mut out_buffer = Align32([0.0; 8]);
 
+        let shiftr1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
+
         for outi in 0..127 {
             let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
             for outj in 0..127 {
                 let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                 let mut sum = _mm256_setzero_ps();
                 for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
-                    let buffer =
+                    let mut offset = (in_i + di) * 512 + in_j;
+
+                    // rewind one element to avoid out of bounds access
+                    if di == 6 && outi == 126 && outj == 126 {
+                        offset -= 1;
+                    }
+
+                    #[cfg(debug_assertions)]
+                    {
+                        if offset > 512 * 512 - 8 {
+                            panic!(
+                                "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
+                                offset,
+                                512 * 512 - 8,
+                                in_i,
+                                in_j,
+                                di,
+                                outi,
+                                outj
+                            );
+                        }
+                    }
+
+                    let mut buffer =
                         _mm256_loadu_ps(buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j));
+
+                    // shift back one element
+                    if di == 6 && outi == 126 && outj == 126 {
+                        buffer = _mm256_permutevar8x32_ps(buffer, shiftr1);
+                    }
+
                     let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
                     sum = _mm256_fmadd_ps(buffer, weights, sum);
                 }
@@ -936,6 +967,21 @@ mod tests {
     use crate::alignment::Align32;
 
     use super::*;
+
+    #[test]
+    fn test_avx2_shift_elements_left() {
+        // test the rewinding paradigm
+        unsafe {
+            // we have rewound the buffer pointer by 1 element, so 0.0 should be get rid of, NAN is out of bounds
+            let fake_buffer = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, f32::NAN];
+            let mut buffer = _mm256_loadu_ps(fake_buffer.as_ptr());
+            let shiftr1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
+            buffer = _mm256_permutevar8x32_ps(buffer, shiftr1);
+            let mut read = [0.0; 8];
+            _mm256_storeu_ps(read.as_mut_ptr(), buffer);
+            assert_eq!(read, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 7.0]);
+        }
+    }
 
     #[test]
     fn test_avx2_horizontal_max_min_sum_ps() {
