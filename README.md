@@ -10,6 +10,7 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
 - [yume-pdq](#yume-pdq)
   - [Table of Contents](#table-of-contents)
   - [Design Goals](#design-goals)
+  - [Releases](#releases)
   - [Pipeline Overview](#pipeline-overview)
   - [Binary usage](#binary-usage)
   - [FFI (C/Python) usage](#ffi-cpython-usage)
@@ -31,9 +32,19 @@ Parallelize well up to the memory bandwidth limit.
 
 Not bit-identical to the reference implementation.
 
-Zero dependencies in the final binary (including statically linked crates).
+Hand-written SIMD is unsafe and you shouldn't trust me, so I provide backwards CFI (LLVM SafeStack) and forward CFI (LLVM CFI) hardened-builds (marked with `-cfi` suffix in release binaries) thanks to a zero-runtime dependency policy on library builds and minimal runtime dependencies on binaries.
 
 No-std support.
+
+## Releases
+
+We provide pre-built binaries, shared objects, and static libraries for Linux, macOS, and Windows, currently for these combinations:
+
+- Linux: x86_64 sse4.2/avx2/avx512
+- macOS: aarch64 neon (I don't have such as system, it is only end-to-end tested to produce equivalent hashes on GitHub Actions, your mileage may vary)
+- Windows: x86_64 sse4.2/avx2/avx512
+
+You can download the binaries from the [GitHub release page](https://github.com/eternal-flame-AD/yume-pdq/releases).
 
 ## Pipeline Overview
 
