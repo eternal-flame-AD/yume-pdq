@@ -1,4 +1,4 @@
-name: Build Linux and Windows Distributable
+name: Unit Test and Build Linux and Windows Distributable
 
 on:
   push:
@@ -11,6 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
+    - name: Install cross compiler
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mingw-w64 gcc-mingw-w64-x86-64-win32
 
     - name: Dump /proc/cpuinfo
       run: |
@@ -35,21 +40,21 @@ jobs:
     - name: Build and Unit Test GNU targets
       run: |
         # Portable SIMD SSE, unit test then build library
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Cdebug-assertions=yes" \
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Cdebug-assertions=yes" \
           cargo test --release  \
           --features "cli portable-simd-fma" -- --nocapture
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87" cargo build --release --lib --features "ffi portable-simd-fma"
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma" cargo build --release --lib --features "ffi portable-simd-fma"
         mkdir -p ci-release
         cp target/release/libyume_pdq.a ci-release/libyume_pdq_sse4.2_only.a
         cp target/release/libyume_pdq.so ci-release/libyume_pdq_sse4.2_only.so
 
         # Portable SIMD SSE CFI
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_sse4.2_only_cfi.so
         cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_sse4.2_only_cfi.a
 
         # Portable SIMD SSE CFI Binary
-        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-sse4.2_only-gnu-cfi
 
         # AVX2. unit test then build library
@@ -130,7 +135,7 @@ jobs:
     - name: Build musl target binary
       run: |
         # Portable SIMD SSE
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87" \
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma" \
           cargo build --release \
           --bin yume-pdq \
           --features "cli portable-simd-fma" \
@@ -192,7 +197,7 @@ jobs:
       run: |
         # Portable SIMD SSE
         # binary
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87" \
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma" \
           cargo build --release \
           --bin yume-pdq \
           --features "cli portable-simd-fma" \
@@ -200,10 +205,9 @@ jobs:
         cp target/x86_64-pc-windows-gnu/release/yume-pdq.exe ci-release/yume-pdq-sse4.2_only.exe
 
         # static and dynamic library
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87" \
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma" \
           cargo build --release --lib --features "ffi portable-simd-fma" \
           --target x86_64-pc-windows-gnu
-        cp target/x86_64-pc-windows-gnu/release/yume_pdq.lib ci-release/yume_pdq_sse4.2_only.lib
         cp target/x86_64-pc-windows-gnu/release/yume_pdq.dll ci-release/yume_pdq_sse4.2_only.dll
 
         # AVX2
@@ -213,20 +217,18 @@ jobs:
           --bin yume-pdq \
           --features "cli" \
           --target x86_64-pc-windows-gnu
-        cp target/x86_64-pc-windows-gnu/release/yume-pdq.exe ci-release/yume-pdq-gnu.exe
+        cp target/x86_64-pc-windows-gnu/release/yume-pdq.exe ci-release/yume-pdq.exe
 
         # static and dynamic library
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma" \
           cargo build --release --lib --features "ffi" \
           --target x86_64-pc-windows-gnu
-        cp target/x86_64-pc-windows-gnu/release/yume_pdq.lib ci-release/yume_pdq_gnu.lib
-        cp target/x86_64-pc-windows-gnu/release/yume_pdq.dll ci-release/yume_pdq_gnu.dll
+        cp target/x86_64-pc-windows-gnu/release/yume_pdq.dll ci-release/yume_pdq.dll
 
         # AVX2 Portable SIMD
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma" \
           cargo build --release --lib --features "ffi portable-simd-fma" \
           --target x86_64-pc-windows-gnu
-        cp target/x86_64-pc-windows-gnu/release/yume_pdq.lib ci-release/yume_pdq_portable_simd.lib
         cp target/x86_64-pc-windows-gnu/release/yume_pdq.dll ci-release/yume_pdq_portable_simd.dll
 
         # binary
@@ -241,7 +243,6 @@ jobs:
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma" \
           cargo build --release --lib --features "ffi portable-simd-fma" \
           --target x86_64-pc-windows-gnu
-        cp target/x86_64-pc-windows-gnu/release/yume_pdq.lib ci-release/yume_pdq_portable_simd.lib
         cp target/x86_64-pc-windows-gnu/release/yume_pdq.dll ci-release/yume_pdq_portable_simd.dll
 
     - name: Publish Artifacts

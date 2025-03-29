@@ -32,7 +32,10 @@ Parallelize well up to the memory bandwidth limit.
 
 Not bit-identical to the reference implementation.
 
-Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves do not have data-dependent jumps but to mitigate data-only exploits I provide backwards CFI (LLVM SafeStack) and forward CFI (LLVM CFI) hardened-builds (marked with `-cfi` suffix in release binaries) thanks to a zero-runtime dependency policy on library builds and minimal runtime dependencies on binaries.
+Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves are written with consideration to minimize possible issues by:
+  -  not having data-dependent jumps or data-dependent indexing
+  -  Add debug time bound assertions to catch SIMD reading out of bounds at test time
+  -  As defense-in-depth and to mitigate data-only exploits I provide backwards CFI (LLVM SafeStack) and forward CFI (LLVM CFI) hardened-builds (marked with `-cfi` suffix in release binaries) thanks to a zero-runtime dependency policy on library builds and minimal runtime dependencies on binaries. They affect performance by <10% when used in isolation due to the kernel having CFI-required jumps.
 
 No-std support.
 
@@ -44,9 +47,9 @@ We provide pre-built binaries, shared objects, and static libraries for Linux, m
   - x86_64 sse4.2_portable_simd/avx2_intrinsic/avx2_portable_simd 
     - statically linked with musl 
     - each also has an accompanying CFI-hardened version linked with glibc
-- macOS: 
+- MacOS (not part of official release due to lack of hardware, only available as [per-build artifacts](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/macos.yml))
   - aarch64 neon 
-    - end-to-end tested on GitHub Actions but I don't have a real hardware to test on, your mileage may vary
+    - end-to-end tested on GitHub Actions
 - Windows: 
   - x86_64 sse4.2_portable_simd/avx2_intrinsic/avx2_portable_simd
     - cross compiled using gnu toolchain
@@ -192,6 +195,8 @@ The accuracy was done by writing unit tests that do pairwise comparison with eit
 Note:
 
 - higher distance to the `pdqhash` library is expected as they have mandatory preprocessing steps that cannot be slipped by the exposed API. The "reference" implementation is a more faithful pairwise comparison.
+
+- Each push and tag on GitHub Actions runs this exact test suite on all Linux and MacOS builds, you can refer to the logs for that specific commit/tag to verify.
 
 - the official "10 bit is correct" threshold is based on real image test vectors, not anime or drawn images, and certainly not terminal screenshots.
   the reason you see the official test vector have much better precision is because real photos have smoother edges, and JPEG compression is also based on DCT transformation which make the frequency domain information more pronounced (see the code example below to help visualize this). However animated images and neofetch screenshots have sharp and sharper edges all throughout the image, which "blurs" the hash and creates more "ambiguous" bits.

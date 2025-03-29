@@ -1,5 +1,4 @@
-
-name: Build macOS Distributable (evaluation only)
+name: Build MacOS Preview Distributable
 
 on:
     push:
