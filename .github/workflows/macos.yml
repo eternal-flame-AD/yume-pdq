@@ -10,13 +10,19 @@ jobs:
         steps:
         - uses: actions/checkout@v4
 
+        - name: Install ImageMagick and Python dependencies
+          run: |
+            brew install imagemagick
+            python -m pip install --upgrade pip
+            pip install pillow numpy
+
         - name: Install nightly toolchain and Apple target
           uses: dtolnay/rust-toolchain@nightly
           with:
             components: rust-src
             targets: x86_64-apple-darwin
 
-        - name: Build
+        - name: Build Binary
           run: |
             mkdir -p ci-release
             # portable simd neon
@@ -27,17 +33,84 @@ jobs:
             RUSTFLAGS="-Ctarget-feature=+neon -Cdebug-assertions=yes" \
               cargo test --release \
               --features "cli portable-simd-fma" -- --nocapture
-            cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-portable-simd-neon
+            cp target/release/yume-pdq ci-release/yume-pdq-macos-portable-simd
 
-            # scalar
-            cargo build --release \
-              --bin yume-pdq \
-              --features "cli"
-            RUSTFLAGS="-Cdebug-assertions=yes" \
-              cargo test --release \
-              --features "cli" -- --nocapture
-            cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-scalar
+        - name: End-to-end binary test
+          run: |
+            for bin in $(find ci-release -name "yume-pdq*" -executable); do
+              echo "Testing $bin"
+              
+              $bin vectorization-info || exit 1
 
+              rm -f output.tmp          
+              convert 'test-data/aaa-orig.jpg' -resize 512x512! -colorspace gray -depth 8 gray:- | \
+                "$bin" pipe -f q+hex+lf | tee output.tmp
+              matched=0
+              while IFS= read -r whitelist || [ -n "$whitelist" ]; do
+                if [ -z "$whitelist" ]; then
+                  continue
+                fi
+                if grep -q "$whitelist" output.tmp; then
+                  echo "Successfully matched hash $whitelist with $bin"
+                  matched=1
+                  break
+                fi
+              done < test-data/aaa-orig.jpg.expect
+              if [ $matched -eq 0 ]; then
+                echo "No whitelist matched with $bin output"
+                exit 1
+              else
+                echo "Success with $bin"
+              fi
+            done
+
+
+        - name: Build Static Library
+          run: |
+              RUSTFLAGS="-Ctarget-feature=+neon" \
+                cargo build --release --lib --features "ffi portable-simd-fma"
+              cp target/release/libyume_pdq.a ci-release/libyume_pdq_macos_portable_simd.a
+
+  
+        - name: Build Shared Library
+          run: |
+              RUSTFLAGS="-Ctarget-feature=+neon" \
+                cargo build --release --lib --features "ffi portable-simd-fma"
+              cp target/release/libyume_pdq.dylib ci-release/libyume_pdq_macos_portable_simd.dylib
+
+        - name: End-to-end shared library test
+          run: |
+            for lib in ci-release/*.dylib; do
+              accepted=0
+              echo "Testing $lib"
+              export LIBYUME_PDQ_PATH=$lib
+
+              # we have a list of acceptable hashes (usually single or double bit flips caused by vectorization rounding errors)
+              
+              while IFS= read -r whitelist || [ -n "$whitelist" ]; do
+                if [ -z "$whitelist" ]; then
+                  continue
+                fi
+                if python integration/hash.py test-data/aaa-orig.jpg | grep "$whitelist"; then
+                  if [ "$?" -eq 0 ]; then
+                    echo "Successfully matched hash $whitelist with $lib"
+                    accepted=1
+                    break
+                  else
+                    echo "$lib returned non-zero exit code"
+                    exit 1
+                  fi
+                else
+                  echo "Failed to match hash $whitelist with $lib, trying next entry"
+                fi
+              done < test-data/aaa-orig.jpg.expect 
+              if [ $accepted -eq 0 ]; then
+                echo "No whitelist matched with $lib output"
+                exit 1
+              else
+                echo "Success with $lib"
+              fi
+            done
 
         - name: Publish Artifacts
           uses: actions/upload-artifact@v4

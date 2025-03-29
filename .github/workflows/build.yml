@@ -66,7 +66,7 @@ jobs:
 
         # TODO: AVX512 build still doesn't work on GitHub Actions
 
-    - name: Run Shared Library test
+    - name: End-to-end shared library test
       run: |
         for lib in ci-release/*.so; do
           accepted=0
@@ -144,7 +144,7 @@ jobs:
           --target x86_64-unknown-linux-musl -- --nocapture
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-portable-simd
 
-    - name: Test all target binaries
+    - name: End-to-end binary test
       run: |
         for bin in $(find ci-release -name "yume-pdq*" -executable); do
           echo "Testing $bin"
