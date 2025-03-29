@@ -141,19 +141,30 @@ where
                 let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
                 let mut sum = SimdPS::<8>::splat(0.0);
                 for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
+                    let mut offset = (in_i + di) * 512 + in_j;
+
+                    // rewind one element to avoid out of bounds access
+                    if di == 6 && outi == 126 && outj == 126 {
+                        offset -= 1;
+                    }
+
                     #[cfg(debug_assertions)]
                     {
-                        let offset_ub = (in_i + di) * 512 + in_j + 8;
-                        if offset_ub > 512 * 512 {
+                        if offset > 512 * 512 - 8 {
                             panic!(
-                                "offset out of bounds: {} is invalid, last valid offset is {}",
-                                offset_ub,
-                                512 * 512 - 1
+                                "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
+                                offset,
+                                512 * 512 - 8,
+                                in_i,
+                                in_j,
+                                di,
+                                outi,
+                                outj
                             );
                         }
                     }
 
-                    let buffer = unsafe {
+                    let mut buffer = unsafe {
                         buffer
                             .flatten()
                             .as_ptr()
@@ -161,6 +172,11 @@ where
                             .cast::<SimdPS<8>>()
                             .read_unaligned()
                     };
+
+                    // shift back one element to avoid out of bounds access
+                    if di == 6 && outi == 126 && outj == 126 {
+                        buffer = buffer.shift_elements_left::<1>(0.0);
+                    }
 
                     #[cfg(debug_assertions)]
                     let weights = SimdPS::<8>::from_slice(&TENT_FILTER_WEIGHTS_X8[di * 8..]);
@@ -262,6 +278,19 @@ where
                     macro_rules! do_loop {
                         (1) => {
                             let k2 = outer + inner;
+
+                            #[cfg(debug_assertions)]
+                            {
+                                let offset = k2 * Self::Buffer1LengthY::USIZE + j_by_8;
+                                if offset > 512 * 512 - 8 {
+                                    panic!(
+                                        "offset out of bounds: {} is invalid, last valid offset is {}, k: {}, j_by_8: {}, outer: {}, inner: {}",
+                                        offset, 512 * 512 - 8, k, j_by_8, outer, inner
+                                    );
+                                }
+                            }
+
+
                             let buf_row = unsafe {
                                 buffer[k2][j_by_8..]
                                     .as_ptr()

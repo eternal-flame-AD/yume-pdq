@@ -726,7 +726,7 @@ fn main() {
         writeln!(
             convolution_offset_file,
             "    {}, // {} -> {}",
-            (in_i.round() as usize).clamp(0, 511),
+            (in_i.round() as usize),
             out_i,
             in_i
         )
