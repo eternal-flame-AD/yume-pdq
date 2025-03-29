@@ -238,9 +238,22 @@ impl Avx2F32Kernel {
 
                     do_loop!(128);
 
+                    let sumk0 = sumk[0];
+                    let sumk1 = sumk[1];
+
+                    let sumk0_not_nan_mask = _mm256_cmp_ps(sumk0, _mm256_setzero_ps(), _CMP_ORD_S);
+
+                    let sumk0_nan_zeroed =
+                        _mm256_blendv_ps(_mm256_setzero_ps(), sumk0, sumk0_not_nan_mask);
+
+                    let sumk1_not_nan_mask = _mm256_cmp_ps(sumk1, _mm256_setzero_ps(), _CMP_ORD_S);
+
+                    let sumk1_nan_zeroed =
+                        _mm256_blendv_ps(_mm256_setzero_ps(), sumk1, sumk1_not_nan_mask);
+
                     _mm256_storeu_ps(
                         tmp.as_mut_ptr().add(j_by_8),
-                        _mm256_add_ps(sumk[0], sumk[1]),
+                        _mm256_add_ps(sumk0_nan_zeroed, sumk1_nan_zeroed),
                     );
                 }
 
@@ -455,7 +468,7 @@ impl Kernel for Avx2F32Kernel {
             // 6 -> (0, 3.984375)
             // 7 -> (0, 1.9921875) at worst off by 1, and with a more educated guess it should be almost impossible to happen
             // 8 -> (0, 0.99609375) perfect thresholding
-            for _iter in 0..8 {
+            for _iter in 0..9 {
                 let guess_v = _mm256_set1_ps(guess);
                 let mut resid_gt_count_v = _mm256_setzero_ps();
                 let mut resid_lt_count_v = _mm256_setzero_ps();
@@ -854,7 +867,18 @@ impl Kernel for Avx512F32Kernel {
 
                     do_loop!(128);
 
-                    let sumk = _mm512_add_ps(sumks[0], sumks[1]);
+                    let sumk0 = sumks[0];
+                    let sumk1 = sumks[1];
+
+                    let sumk0_nan_mask = _mm512_cmp_ps_mask(sumk0, _mm512_setzero_ps(), _CMP_ORD_S);
+                    let sumk1_nan_mask = _mm512_cmp_ps_mask(sumk1, _mm512_setzero_ps(), _CMP_ORD_S);
+
+                    let sumk0_nan_zeroed =
+                        _mm512_mask_blend_ps(sumk0_nan_mask, _mm512_setzero_ps(), sumk0);
+                    let sumk1_nan_zeroed =
+                        _mm512_mask_blend_ps(sumk1_nan_mask, _mm512_setzero_ps(), sumk1);
+
+                    let sumk = _mm512_add_ps(sumk0_nan_zeroed, sumk1_nan_zeroed);
 
                     _mm512_storeu_ps(tmp.as_mut_ptr().add(j_by_16), sumk);
                 }

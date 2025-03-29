@@ -35,14 +35,14 @@ use generic_array::{
     sequence::{Flatten, GenericSequence},
     typenum::{B1, U4, Unsigned},
 };
+#[allow(unused_imports)]
 use yume_pdq::{
     GenericArray, PDQHash, PDQHashF,
     alignment::Align32,
     kernel::{
-        DefaultKernelPadXYTo128, Kernel,
+        FallbackKernel, Kernel,
         router::KernelRouter,
         type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
-        x86::Avx2F32Kernel,
     },
     lut_utils,
 };
@@ -559,12 +559,18 @@ fn x86_64_new_kernel() -> impl Kernel<
 > {
     #[cfg(feature = "avx512")]
     {
-        KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
-            .layer_on_top(yume_pdq::kernel::x86::Avx512F32Kernel)
+        KernelRouter::new(
+            yume_pdq::kernel::x86::Avx2F32Kernel,
+            FallbackKernel::default(),
+        )
+        .layer_on_top(yume_pdq::kernel::x86::Avx512F32Kernel)
     }
     #[cfg(not(feature = "avx512"))]
     {
-        KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
+        KernelRouter::new(
+            yume_pdq::kernel::x86::Avx2F32Kernel,
+            FallbackKernel::default(),
+        )
     }
 }
 
@@ -612,7 +618,7 @@ fn main() {
                 "Vectorization info is currently only available on x86_64. ARM NEON support is planned."
             );
 
-            let kernel = kernel::DefaultKernel();
+            let kernel = FallbackKernel::default();
             println!("Router type: {}", type_name_of(&kernel));
         }
         Some(("random-stream", _)) => {
@@ -644,7 +650,7 @@ fn main() {
             let (kernel0, kernel1) = { (x86_64_new_kernel(), x86_64_new_kernel()) };
 
             #[cfg(not(target_arch = "x86_64"))]
-            let (kernel0, kernel1) = (kernel::DefaultKernel(), kernel::DefaultKernel());
+            let (kernel0, kernel1) = (FallbackKernel::default(), FallbackKernel::default());
 
             let reader = open_reader(&arg_input).unwrap();
             let writer = open_writer(&arg_output, arg_output_buffer).unwrap();

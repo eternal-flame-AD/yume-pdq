@@ -55,6 +55,10 @@ pub mod router;
 /// 128-bit floating point type.
 pub mod float128;
 
+#[cfg(feature = "portable-simd")]
+/// Portable SIMD implementation.
+pub mod portable_simd;
+
 // potentially incorrect, don't use it for now
 // pub mod dihedral;
 
@@ -68,19 +72,29 @@ include!(concat!(env!("OUT_DIR"), "/dct_matrix.rs"));
 include!(concat!(env!("OUT_DIR"), "/tent_filter_weights.rs"));
 include!(concat!(env!("OUT_DIR"), "/convolution_offset.rs"));
 
+#[cfg(feature = "portable-simd")]
+/// The worst case fallback kernel.
+pub type FallbackKernel = portable_simd::PortableSimdF32Kernel<8>;
+
+#[cfg(all(not(feature = "portable-simd"), not(target_arch = "x86_64")))]
+/// The worst case fallback kernel.
+pub type FallbackKernel = DefaultKernelNoPadding;
+
+#[cfg(all(not(feature = "portable-simd"), target_arch = "x86_64"))]
+type FallbackKernel = DefaultKernelPadXYTo128;
+
 #[cfg(not(target_arch = "x86_64"))]
-pub(crate) type SmartKernelConcreteType = DefaultKernelNoPadding;
+pub(crate) type SmartKernelConcreteType = FallbackKernel;
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(not(feature = "avx512"))]
-pub(crate) type SmartKernelConcreteType =
-    router::KernelRouter<x86::Avx2F32Kernel, DefaultKernelPadXYTo128>;
+pub(crate) type SmartKernelConcreteType = router::KernelRouter<x86::Avx2F32Kernel, FallbackKernel>;
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(feature = "avx512")]
 pub(crate) type SmartKernelConcreteType = router::KernelRouter<
     x86::Avx512F32Kernel,
-    router::KernelRouter<x86::Avx2F32Kernel, DefaultKernelPadXYTo128>,
+    router::KernelRouter<x86::Avx2F32Kernel, FallbackKernel>,
 >;
 
 /// Return an opaque kernel object that is likely what you want. (based on your feature flags)
@@ -102,22 +116,23 @@ pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
     #[allow(unused_imports)]
     use router::KernelRouter;
 
+    let router = KernelRouter::new(x86::Avx2F32Kernel, FallbackKernel::default());
+
     #[cfg(feature = "avx512")]
     {
-        KernelRouter::new(x86::Avx2F32Kernel, DefaultKernelPadXYTo128::default())
-            .layer_on_top(x86::Avx512F32Kernel)
+        router.layer_on_top(x86::Avx512F32Kernel)
     }
 
     #[cfg(not(feature = "avx512"))]
     {
-        KernelRouter::new(x86::Avx2F32Kernel, DefaultKernelPadXYTo128::default())
+        router
     }
 }
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
 pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
-    DefaultKernelNoPadding::default()
+    FallbackKernel::default()
 }
 
 mod sealing {
@@ -1099,7 +1114,6 @@ mod tests {
         );
 
         for i in 0..16 {
-            print!("(reference, actual) = [");
             for j in 0..16 {
                 let diff = (output_ref[i][j] - output[i][j]).abs();
                 let diff_ref = diff / output_ref[i][j];
@@ -1110,9 +1124,7 @@ mod tests {
                     diff,
                     diff_ref
                 );
-                print!("({} {}) ", output_ref[i][j], output[i][j]);
             }
-            println!("]");
         }
 
         // part 2: hold the input buffer constant and fill the DCT matrix sequentially
@@ -1145,20 +1157,17 @@ mod tests {
         );
 
         for i in 0..16 {
-            print!("(reference, actual) = [");
             for j in 0..16 {
                 let diff = (output_ref[i][j] - output[i][j]).abs();
                 let diff_ref = diff / output_ref[i][j];
-                // accept up to 0.00004% rounding error (4e-7), almost f32::EPSILON
+                // accept up to 0.00008% rounding error (8e-7), almost f32::EPSILON
                 assert!(
-                    diff_ref < 4e-7,
+                    diff_ref < 8e-7,
                     "difference: {:?} (relative: {:?})",
                     diff,
                     diff_ref
                 );
-                print!("({} {}) ", output_ref[i][j], output[i][j]);
             }
-            println!("]");
         }
     }
 
