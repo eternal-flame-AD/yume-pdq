@@ -37,7 +37,7 @@ jobs:
 
         - name: End-to-end binary test
           run: |
-            for bin in $(find ci-release -name "yume-pdq*" -executable); do
+            for bin in $(find ci-release -name "yume-pdq*" -perm +111); do
               echo "Testing $bin"
               
               $bin vectorization-info || exit 1

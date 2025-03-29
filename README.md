@@ -79,9 +79,9 @@ This library can be built as a shared object that can be used by C/Python applic
 
 Currently there is only one exported symbol.
 
-See [integration/c.c](integration/c.c) for an example of how to use this library from C.
+See [integration/dummy.c](integration/dummy.c) for an example of how to use this library from C.
 
-See [integration/python.py](integration/python.py) for an example of how to use this library from Python.
+See [integration/hash.py](integration/hash.py) for an example of how to use this library from Python.
 
 You can download a pre-built AVX2 shared object from GitHub release artifacts but I recommend building it for your specific machine for best assurance that it would work and performance.
 
