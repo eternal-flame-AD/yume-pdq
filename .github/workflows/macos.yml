@@ -20,15 +20,15 @@ jobs:
           run: |
             mkdir -p ci-release
             # portable simd sve2
-            RUSTFLAGS="-Ctarget-feature=+neon,+sve,+sve2" cargo build --release --bin yume-pdq --features "cli portable-simd"
+            RUSTFLAGS="-Ctarget-feature=+neon,+sve,+sve2" cargo build --release --bin yume-pdq --features "cli portable-simd-fma"
             cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-portable-simd-sve2
 
             # portable simd sve
-            RUSTFLAGS="-Ctarget-feature=+neon,+sve" cargo build --release --bin yume-pdq --features "cli portable-simd"
+            RUSTFLAGS="-Ctarget-feature=+neon,+sve" cargo build --release --bin yume-pdq --features "cli portable-simd-fma"
             cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-portable-simd-sve
 
             # portable simd neon
-            RUSTFLAGS="-Ctarget-feature=+neon" cargo build --release --bin yume-pdq --features "cli portable-simd"
+            RUSTFLAGS="-Ctarget-feature=+neon" cargo build --release --bin yume-pdq --features "cli portable-simd-fma"
             cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-portable-simd-neon
 
             # scalar

@@ -550,30 +550,6 @@ fn open_writer(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn x86_64_new_kernel() -> impl Kernel<
-    RequiredHardwareFeature = impl EvaluateHardwareFeature<EnabledStatic = B1>,
-    OutputDimension = impl DivisibleBy8
-                      + SquareOf<Output = impl ArrayLength + Div<U4, Output = impl ArrayLength>>,
-    InternalFloat = f32,
-> {
-    #[cfg(feature = "avx512")]
-    {
-        KernelRouter::new(
-            yume_pdq::kernel::x86::Avx2F32Kernel,
-            FallbackKernel::default(),
-        )
-        .layer_on_top(yume_pdq::kernel::x86::Avx512F32Kernel)
-    }
-    #[cfg(not(feature = "avx512"))]
-    {
-        KernelRouter::new(
-            yume_pdq::kernel::x86::Avx2F32Kernel,
-            FallbackKernel::default(),
-        )
-    }
-}
-
 fn type_name_of<T>(_: &T) -> &'static str {
     std::any::type_name::<T>()
 }
@@ -602,7 +578,7 @@ fn main() {
 
             println!("\n=== Runtime Routing Infomation ===\n");
 
-            let kernel = x86_64_new_kernel();
+            let kernel = yume_pdq::kernel::smart_kernel();
 
             let ident = kernel.ident();
 
@@ -646,11 +622,12 @@ fn main() {
             let arg_stats = sub_matches.get_flag("stats");
             let arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
 
-            #[cfg(target_arch = "x86_64")]
-            let (kernel0, kernel1) = { (x86_64_new_kernel(), x86_64_new_kernel()) };
-
-            #[cfg(not(target_arch = "x86_64"))]
-            let (kernel0, kernel1) = (FallbackKernel::default(), FallbackKernel::default());
+            let (kernel0, kernel1) = {
+                (
+                    yume_pdq::kernel::smart_kernel(),
+                    yume_pdq::kernel::smart_kernel(),
+                )
+            };
 
             let reader = open_reader(&arg_input).unwrap();
             let writer = open_writer(&arg_output, arg_output_buffer).unwrap();

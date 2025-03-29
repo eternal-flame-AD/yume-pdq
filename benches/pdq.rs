@@ -4,6 +4,7 @@ use rand::Rng;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
+use yume_pdq::kernel::portable_simd;
 #[allow(unused_imports)]
 use yume_pdq::{
     GenericArray,
@@ -169,7 +170,7 @@ fn bench_jarosz_compress(c: &mut Criterion) {
         for _ in 0..(512 * 512) {
             data.push(rng.random_range(0.0..1.0));
         }
-        let mut kernel = DefaultKernelNoPadding::default();
+        let mut kernel = portable_simd::PortableSimdF32Kernel::<8>::default();
         b.iter(|| {
             let mut output = GenericArray::default();
             kernel.jarosz_compress(
@@ -534,6 +535,41 @@ fn bench_hash_par(c: &mut Criterion) {
                         .zip(outputs.par_iter_mut())
                         .for_each(|(input, output)| {
                             let mut kernel = DefaultKernelNoPadding::default();
+                            let mut buf1 = GenericArray::default();
+                            let mut buf2 = GenericArray::default();
+                            yume_pdq::hash(
+                                &mut kernel,
+                                GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
+                                output,
+                                &mut buf1,
+                                &mut GenericArray::default(),
+                                &mut buf2,
+                            );
+                        });
+                });
+                outputs
+            });
+        });
+
+        #[cfg(feature = "portable-simd")]
+        group.bench_function("portable-simd", |b| {
+            let inputs: [Vec<f32>; INPUT_PER_ROUND] = std::array::from_fn(|_| {
+                let mut input = Vec::with_capacity(512 * 512);
+                for _ in 0..(512 * 512) {
+                    input.push(rng.random_range(0.0..1.0));
+                }
+                input
+            });
+
+            b.iter(|| {
+                let mut outputs: [Box<GenericArray<GenericArray<u8, U2>, U16>>; INPUT_PER_ROUND] =
+                    std::array::from_fn(|_| Box::new(GenericArray::default()));
+                pool.install(|| {
+                    inputs
+                        .par_iter()
+                        .zip(outputs.par_iter_mut())
+                        .for_each(|(input, output)| {
+                            let mut kernel = portable_simd::PortableSimdF32Kernel::<8>::default();
                             let mut buf1 = GenericArray::default();
                             let mut buf2 = GenericArray::default();
                             yume_pdq::hash(

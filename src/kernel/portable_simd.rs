@@ -24,6 +24,35 @@ compile_error!(
     "sanity check: rustc reported target platform as both little-endian and big-endian!"
 );
 
+#[cfg(not(feature = "portable-simd-fma"))]
+macro_rules! fma {
+    (($a:expr) * ($b:expr) + ($c:expr)) => {
+        ($a * $b) + $c
+    };
+    ($acc:ident += ($a:expr) * ($b:expr)) => {
+        $acc = ($a * $b) + $acc;
+    };
+    (($acc:expr) += ($a:expr) * ($b:expr)) => {
+        $acc = ($a * $b) + $acc;
+    };
+}
+
+#[cfg(feature = "portable-simd-fma")]
+macro_rules! fma {
+    (($a:expr) * ($b:expr) + ($c:expr)) => {{
+        use std::simd::StdFloat;
+        $a.mul_add($b, $c)
+    }};
+    ($acc:ident += ($a:expr) * ($b:expr)) => {{
+        use std::simd::StdFloat;
+        $acc = $a.mul_add($b, $acc);
+    }};
+    (($acc:expr) += ($a:expr) * ($b:expr)) => {{
+        use std::simd::StdFloat;
+        $acc = $a.mul_add($b, $acc);
+    }};
+}
+
 mod sealing {
     pub trait Sealed {}
 }
@@ -149,7 +178,7 @@ where
                             .read_unaligned()
                     };
 
-                    sum += buffer * weights;
+                    fma!(sum += (buffer) * (weights));
                 }
 
                 output[outi][outj] = sum.reduce_sum();
@@ -244,7 +273,7 @@ where
                                     .read_unaligned()
                             };
                             let dct = dct_row_swizzled[inner];
-                            sumks[sum_target as usize] = sumks[sum_target as usize] + buf_row * dct;
+                            fma!((sumks[sum_target as usize]) += (buf_row) * (dct));
                         };
                         (2) => {
                             do_loop!(1);
@@ -300,7 +329,7 @@ where
                                 .cast::<SimdPS<8>>()
                                 .read_unaligned()
                         };
-                        sumkh[sum_target as usize] = sumkh[sum_target as usize] + tmp_row * dct_row;
+                        fma!((sumkh[sum_target as usize]) += (tmp_row) * (dct_row));
                     };
                     (16) => {
                         do_loop!(8);

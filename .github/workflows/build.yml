@@ -50,6 +50,11 @@ jobs:
         cp target/release/libyume_pdq.so ci-release/libyume_pdq.so
         cp target/release/libyume_pdq.a ci-release/libyume_pdq.a
 
+        # AVX2 Portable SIMD
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma" cargo build --release --lib --features "ffi portable-simd-fma"
+        cp target/release/libyume_pdq.so ci-release/libyume_pdq_portable_simd.so
+        cp target/release/libyume_pdq.a ci-release/libyume_pdq_portable_simd.a
+
         # AVX2 CFI
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_cfi.so
@@ -109,6 +114,10 @@ jobs:
         # AVX2
         RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq
+
+        # AVX2 Portable SIMD
+        RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --bin yume-pdq --features "cli portable-simd-fma" --target x86_64-unknown-linux-musl
+        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-portable-simd
 
     - name: Test all target binaries
       run: |

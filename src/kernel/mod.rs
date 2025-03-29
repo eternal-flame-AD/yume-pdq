@@ -62,7 +62,7 @@ pub mod portable_simd;
 // potentially incorrect, don't use it for now
 // pub mod dihedral;
 
-/// Thresholding methods.
+/// Threshold/quantization methods.
 pub mod threshold;
 
 /// Type traits.
@@ -81,21 +81,8 @@ pub type FallbackKernel = portable_simd::PortableSimdF32Kernel<8>;
 pub type FallbackKernel = DefaultKernelNoPadding;
 
 #[cfg(all(not(feature = "portable-simd"), target_arch = "x86_64"))]
-type FallbackKernel = DefaultKernelPadXYTo128;
-
-#[cfg(not(target_arch = "x86_64"))]
-pub(crate) type SmartKernelConcreteType = FallbackKernel;
-
-#[cfg(target_arch = "x86_64")]
-#[cfg(not(feature = "avx512"))]
-pub(crate) type SmartKernelConcreteType = router::KernelRouter<x86::Avx2F32Kernel, FallbackKernel>;
-
-#[cfg(target_arch = "x86_64")]
-#[cfg(feature = "avx512")]
-pub(crate) type SmartKernelConcreteType = router::KernelRouter<
-    x86::Avx512F32Kernel,
-    router::KernelRouter<x86::Avx2F32Kernel, FallbackKernel>,
->;
+/// The worst case fallback kernel.
+pub type FallbackKernel = DefaultKernelPadXYTo128;
 
 /// Return an opaque kernel object that is likely what you want. (based on your feature flags)
 ///
@@ -111,21 +98,66 @@ pub fn smart_kernel() -> impl Kernel<
 }
 
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "avx512")]
+#[cfg(any(feature = "prefer-x86-intrinsics", not(feature = "portable-simd")))]
+pub(crate) type SmartKernelConcreteType = router::KernelRouter<
+    x86::Avx512F32Kernel,
+    router::KernelRouter<x86::Avx2F32Kernel, FallbackKernel>,
+>;
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(feature = "avx512")]
+#[cfg(all(not(feature = "prefer-x86-intrinsics"), feature = "portable-simd"))]
+pub(crate) type SmartKernelConcreteType =
+    router::KernelRouter<x86::Avx512F32Kernel, portable_simd::PortableSimdF32Kernel<8>>;
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(feature = "avx512")]
 #[inline(always)]
 pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
     #[allow(unused_imports)]
     use router::KernelRouter;
 
-    let router = KernelRouter::new(x86::Avx2F32Kernel, FallbackKernel::default());
-
-    #[cfg(feature = "avx512")]
+    #[cfg(any(feature = "prefer-x86-intrinsics", not(feature = "portable-simd")))]
     {
-        router.layer_on_top(x86::Avx512F32Kernel)
+        KernelRouter::new(x86::Avx2F32Kernel, FallbackKernel::default())
+            .layer_on_top(x86::Avx512F32Kernel)
     }
 
-    #[cfg(not(feature = "avx512"))]
+    #[cfg(all(not(feature = "prefer-x86-intrinsics"), feature = "portable-simd"))]
     {
-        router
+        KernelRouter::new(
+            x86::Avx512F32Kernel,
+            portable_simd::PortableSimdF32Kernel::<8>,
+        )
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(not(feature = "avx512"))]
+#[cfg(any(feature = "prefer-x86-intrinsics", not(feature = "portable-simd")))]
+pub(crate) type SmartKernelConcreteType = router::KernelRouter<x86::Avx2F32Kernel, FallbackKernel>;
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(not(feature = "avx512"))]
+#[cfg(all(not(feature = "prefer-x86-intrinsics"), feature = "portable-simd"))]
+pub(crate) type SmartKernelConcreteType = portable_simd::PortableSimdF32Kernel<8>;
+
+#[cfg(target_arch = "x86_64")]
+#[cfg(not(feature = "avx512"))]
+#[inline(always)]
+pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
+    #[allow(unused_imports)]
+    use router::KernelRouter;
+
+    #[cfg(any(feature = "prefer-x86-intrinsics", not(feature = "portable-simd")))]
+    {
+        KernelRouter::new(x86::Avx2F32Kernel, FallbackKernel::default())
+    }
+
+    #[cfg(all(not(feature = "prefer-x86-intrinsics"), feature = "portable-simd"))]
+    {
+        portable_simd::PortableSimdF32Kernel::<8>::default()
     }
 }
 
