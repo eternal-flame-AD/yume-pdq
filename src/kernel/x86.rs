@@ -353,8 +353,7 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
                         }
                     }
 
-                    let mut buffer =
-                        _mm256_loadu_ps(buffer.flatten().as_ptr().add((in_i + di) * 512 + in_j));
+                    let mut buffer = _mm256_loadu_ps(buffer.flatten().as_ptr().add(offset));
 
                     // shift back one element
                     if di == 6 && outi == 126 && outj == 126 {

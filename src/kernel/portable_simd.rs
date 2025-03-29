@@ -168,7 +168,7 @@ where
                         buffer
                             .flatten()
                             .as_ptr()
-                            .add((in_i + di) * 512 + in_j)
+                            .add(offset)
                             .cast::<SimdPS<8>>()
                             .read_unaligned()
                     };
