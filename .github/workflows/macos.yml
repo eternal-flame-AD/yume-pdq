@@ -26,7 +26,7 @@ jobs:
               --features "cli portable-simd-fma"
             RUSTFLAGS="-Ctarget-feature=+neon -Cdebug-assertions=yes" \
               cargo test --release \
-              --features "cli portable-simd-fma"
+              --features "cli portable-simd-fma" -- --nocapture
             cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-portable-simd-neon
 
             # scalar
@@ -35,7 +35,7 @@ jobs:
               --features "cli"
             RUSTFLAGS="-Cdebug-assertions=yes" \
               cargo test --release \
-              --features "cli"
+              --features "cli" -- --nocapture
             cp target/release/yume-pdq ci-release/yume-pdq-macos-evaluation-scalar
 
 

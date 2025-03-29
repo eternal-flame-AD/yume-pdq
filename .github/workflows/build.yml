@@ -116,7 +116,7 @@ jobs:
         RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Cdebug-assertions=yes" \
           cargo test --release  \
           --features "cli portable-simd-fma" \
-          --target x86_64-unknown-linux-musl
+          --target x86_64-unknown-linux-musl -- --nocapture
 
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-sse4.2_only
 
@@ -129,7 +129,7 @@ jobs:
         RUSTFLAGS="-C target-feature=+avx2,+fma -Cdebug-assertions=yes" \
           cargo test --release \
           --features "cli" \
-          --target x86_64-unknown-linux-musl
+          --target x86_64-unknown-linux-musl -- --nocapture
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq
 
         # AVX2 Portable SIMD
@@ -141,7 +141,7 @@ jobs:
         RUSTFLAGS="-C target-feature=+avx2,+fma -Cdebug-assertions=yes" \
           cargo test --release \
           --features "cli portable-simd-fma" \
-          --target x86_64-unknown-linux-musl
+          --target x86_64-unknown-linux-musl -- --nocapture
         cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-portable-simd
 
     - name: Test all target binaries
