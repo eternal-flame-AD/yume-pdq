@@ -137,11 +137,21 @@ where
                             .read_unaligned()
                     };
 
+                    #[cfg(debug_assertions)]
                     let weights = SimdPS::<8>::from_slice(&TENT_FILTER_WEIGHTS_X8[di * 8..]);
+
+                    #[cfg(not(debug_assertions))]
+                    let weights = unsafe {
+                        TENT_FILTER_WEIGHTS_X8
+                            .as_ptr()
+                            .add(di * 8)
+                            .cast::<SimdPS<8>>()
+                            .read_unaligned()
+                    };
+
                     sum += buffer * weights;
                 }
-                sum = sum.shift_elements_left::<1>(0.0);
-                sum = sum.shift_elements_left::<1>(0.0);
+
                 output[outi][outj] = sum.reduce_sum();
             }
         }

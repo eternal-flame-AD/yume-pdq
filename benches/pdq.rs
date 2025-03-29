@@ -59,6 +59,25 @@ fn bench_dct2d(c: &mut Criterion) {
         });
     });
 
+    #[cfg(feature = "portable-simd")]
+    group.bench_function("portable-simd", |b| {
+        let mut input: GenericArray<
+            GenericArray<f32, <yume_pdq::kernel::portable_simd::PortableSimdF32Kernel<8> as Kernel>::Buffer1WidthX>,
+            <yume_pdq::kernel::portable_simd::PortableSimdF32Kernel<8> as Kernel>::Buffer1LengthY,
+        > = GenericArray::default();
+        for i in 0..127 {
+            for j in 0..127 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
+        let mut kernel = yume_pdq::kernel::portable_simd::PortableSimdF32Kernel::<8>::default();
+        b.iter(|| {
+            let mut output = GenericArray::default();
+            kernel.dct2d(&input, &mut GenericArray::default(), &mut output);
+            output
+        });
+    });
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
@@ -144,6 +163,23 @@ fn bench_jarosz_compress(c: &mut Criterion) {
         });
     });
 
+    #[cfg(feature = "portable-simd")]
+    group.bench_function("portable-simd", |b| {
+        let mut data = Vec::with_capacity(512 * 512);
+        for _ in 0..(512 * 512) {
+            data.push(rng.random_range(0.0..1.0));
+        }
+        let mut kernel = DefaultKernelNoPadding::default();
+        b.iter(|| {
+            let mut output = GenericArray::default();
+            kernel.jarosz_compress(
+                GenericArray::from_slice(data.as_slice()).unflatten_square_ref(),
+                &mut output,
+            );
+            output
+        });
+    });
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
@@ -191,6 +227,22 @@ fn bench_quantize(c: &mut Criterion) {
         });
     });
 
+    #[cfg(feature = "portable-simd")]
+    group.bench_function("portable-simd", |b| {
+        let mut input = GenericArray::<GenericArray<f32, U16>, U16>::default();
+        for i in 0..16 {
+            for j in 0..16 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
+        let mut kernel = yume_pdq::kernel::portable_simd::PortableSimdF32Kernel::<8>::default();
+        b.iter(|| {
+            let mut output = GenericArray::<GenericArray<u8, U2>, U16>::default();
+            kernel.quantize(&input, &mut Default::default(), &mut output);
+            output
+        });
+    });
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
@@ -230,6 +282,18 @@ fn bench_sum_of_gradients(c: &mut Criterion) {
             }
         }
         let mut kernel = DefaultKernelNoPadding::default();
+        b.iter(|| kernel.sum_of_gradients(&input));
+    });
+
+    #[cfg(feature = "portable-simd")]
+    group.bench_function("portable-simd", |b| {
+        let mut input = GenericArray::<GenericArray<f32, U16>, U16>::default();
+        for i in 0..16 {
+            for j in 0..16 {
+                input[i][j] = rng.random_range(0.0..1.0);
+            }
+        }
+        let mut kernel = yume_pdq::kernel::portable_simd::PortableSimdF32Kernel::<8>::default();
         b.iter(|| kernel.sum_of_gradients(&input));
     });
 
@@ -309,6 +373,29 @@ fn bench_hash(c: &mut Criterion) {
         #[cfg(feature = "avx512")]
         let mut kernel = KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
             .layer_on_top(x86::Avx512F32Kernel);
+        b.iter(|| {
+            let mut output = GenericArray::default();
+            let mut buf1 = GenericArray::default();
+            let mut buf2 = GenericArray::default();
+            yume_pdq::hash(
+                &mut kernel,
+                GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
+                &mut output,
+                &mut buf1,
+                &mut GenericArray::default(),
+                &mut buf2,
+            );
+            output
+        });
+    });
+
+    #[cfg(feature = "portable-simd")]
+    group.bench_function("portable-simd", |b| {
+        let mut input = Vec::with_capacity(512 * 512);
+        for _ in 0..(512 * 512) {
+            input.push(rng.random_range(0.0..1.0));
+        }
+        let mut kernel = yume_pdq::kernel::portable_simd::PortableSimdF32Kernel::<8>::default();
         b.iter(|| {
             let mut output = GenericArray::default();
             let mut buf1 = GenericArray::default();

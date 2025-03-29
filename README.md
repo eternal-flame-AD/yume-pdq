@@ -124,11 +124,15 @@ ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=512x512:rate=1  -pi
 
 Finally each kernel is tested against both sources. FPS was collected by running `yume-pdq pipe --stats` and recording the output.
 
-| Vectorization | Random Source | FFMPEG SMPTE |
-| ------------- | ------------- | ------------ |
-| AVX512        | 7900 fps      | 4050 fps     |
-| AVX2          | 7100 fps      | 4100 fps     |
-| Scalar        | 1600 fps      | 1500 fps     |
+| Vectorization                               | Random Source | FFMPEG SMPTE |
+| ------------------------------------------- | ------------- | ------------ |
+| AVX512                                      | 7900 fps      | 4050 fps     |
+| AVX2                                        | 7100 fps      | 4100 fps     |
+| Scalar Auto Vectorized                      | 1600 fps      | 1500 fps     |
+| Google Pixel 9 Pro (SVE2 by portable-simd)  | 1478/255 fps  | N/A          |
+| Google Pixel 9 Pro (scalar auto vectorized) | 220/90 fps    | N/A          |
+
+* Smartphone SoCs have high performance cores and power-efficient cores, Android throttles heavy workload on power-efficient cores quickly so there are two numbers for burst and sustained performance.
 
 AVX2 was able to saturate the speed FFMPEG can generate SMPTE bars.
 
