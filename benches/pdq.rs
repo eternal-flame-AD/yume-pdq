@@ -4,17 +4,20 @@ use rand::Rng;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
 };
+#[cfg(feature = "portable-simd")]
 use yume_pdq::kernel::portable_simd;
 #[allow(unused_imports)]
 use yume_pdq::{
     GenericArray,
     kernel::{
         DefaultKernel, DefaultKernelNoPadding, DefaultKernelPadXYTo128, Kernel,
-        SquareGenericArrayExt,
-        router::KernelRouter,
-        x86::{self, Avx2F32Kernel},
+        SquareGenericArrayExt, router::KernelRouter,
     },
 };
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unused_imports)]
+use yume_pdq::kernel::x86;
 
 fn bench_dct2d(c: &mut Criterion) {
     let mut rng = rand::rng();
@@ -348,32 +351,6 @@ fn bench_hash(c: &mut Criterion) {
             input.push(rng.random_range(0.0..1.0));
         }
         let mut kernel = DefaultKernelNoPadding::default();
-        b.iter(|| {
-            let mut output = GenericArray::default();
-            let mut buf1 = GenericArray::default();
-            let mut buf2 = GenericArray::default();
-            yume_pdq::hash(
-                &mut kernel,
-                GenericArray::from_slice(input.as_slice()).unflatten_square_ref(),
-                &mut output,
-                &mut buf1,
-                &mut GenericArray::default(),
-                &mut buf2,
-            );
-            output
-        });
-    });
-
-    group.bench_function("smart", |b| {
-        let mut input = Vec::with_capacity(512 * 512);
-        for _ in 0..(512 * 512) {
-            input.push(rng.random_range(0.0..1.0));
-        }
-        #[cfg(not(feature = "avx512"))]
-        let mut kernel = KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default());
-        #[cfg(feature = "avx512")]
-        let mut kernel = KernelRouter::new(Avx2F32Kernel, DefaultKernelPadXYTo128::default())
-            .layer_on_top(x86::Avx512F32Kernel);
         b.iter(|| {
             let mut output = GenericArray::default();
             let mut buf1 = GenericArray::default();
