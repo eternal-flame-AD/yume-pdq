@@ -322,7 +322,10 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
         // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
         let mut out_buffer = Align32([0.0; 8]);
 
-        let shiftr1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
+        // little endian:                               [7] [6] [5] [4] [3] [2] [1] [0]
+        // intended index: [-1, 0, 1, 2, 3, 4, 5, 6] -> [0,  1,  2,  3,  4,  5,  6,  7]
+        // the last one is not important (padded into zero by FMA)
+        let shiftl1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
 
         for outi in 0..127 {
             let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
@@ -357,7 +360,7 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
 
                     // shift back one element
                     if di == 6 && outi == 126 && outj == 126 {
-                        buffer = _mm256_permutevar8x32_ps(buffer, shiftr1);
+                        buffer = _mm256_permutevar8x32_ps(buffer, shiftl1);
                     }
 
                     let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));

@@ -174,6 +174,7 @@ where
                     };
 
                     // shift back one element to avoid out of bounds access
+                    // [-1, 0, 1, 2, 3, 4, 5, 6] -> [0, 1, 2, 3, 4, 5, 6, 7]
                     if di == 6 && outi == 126 && outj == 126 {
                         buffer = buffer.shift_elements_left::<1>(0.0);
                     }
