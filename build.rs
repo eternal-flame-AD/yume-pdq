@@ -398,9 +398,10 @@ fn main() {
 
     let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
 
+    #[allow(unused)]
     let target_features = target_features.split(',').collect::<Vec<_>>();
 
-    #[allow(unused_assignments)]
+    #[allow(unused_assignments, unused_mut)]
     let mut target_specific_cli_message = "This yume-pdq kernel has no vectorized superpowers.";
 
     #[cfg(target_arch = "x86_64")]
