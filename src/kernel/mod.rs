@@ -162,6 +162,9 @@ pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
 }
 
 #[cfg(not(target_arch = "x86_64"))]
+pub(crate) type SmartKernelConcreteType = FallbackKernel;
+
+#[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
 pub(crate) fn smart_kernel_impl() -> SmartKernelConcreteType {
     FallbackKernel::default()
