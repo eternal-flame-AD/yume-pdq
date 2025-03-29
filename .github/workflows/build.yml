@@ -30,20 +30,20 @@ jobs:
 
     - name: Build GNU targets
       run: |
-        # Scalar
-        cargo build --release --lib --features "ffi"
+        # Portable SIMD SSE
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87" cargo build --release --lib --features "ffi portable-simd-fma"
         mkdir -p ci-release
-        cp target/release/libyume_pdq.a ci-release/libyume_pdq_scalar.a
-        cp target/release/libyume_pdq.so ci-release/libyume_pdq_scalar.so
+        cp target/release/libyume_pdq.a ci-release/libyume_pdq_sse4.2_only.a
+        cp target/release/libyume_pdq.so ci-release/libyume_pdq_sse4.2_only.so
 
-        # Scalar CFI
-        RUSTFLAGS="-Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
-        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_scalar_cfi.so
-        cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_scalar_cfi.a
+        # Portable SIMD SSE CFI
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
+        cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_sse4.2_only_cfi.so
+        cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_sse4.2_only_cfi.a
 
-        # Scalar CFI Binary
-        RUSTFLAGS="-Cpanic=abort -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
-        cp target/release-no-lto/yume-pdq ci-release/yume-pdq-scalar-gnu-cfi
+        # Portable SIMD SSE CFI Binary
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87 -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
+        cp target/release-no-lto/yume-pdq ci-release/yume-pdq-sse4.2_only-gnu-cfi
 
         # AVX2
         RUSTFLAGS="-Ctarget-feature=+avx2,+fma" cargo build --release --lib --features "ffi"
@@ -107,9 +107,9 @@ jobs:
 
     - name: Build musl target binary
       run: |
-        # Scalar
-        cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
-        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-scalar
+        # Portable SIMD SSE
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma,+x87" cargo build --release --bin yume-pdq --features "cli portable-simd-fma" --target x86_64-unknown-linux-musl
+        cp target/x86_64-unknown-linux-musl/release/yume-pdq ci-release/yume-pdq-sse4.2_only
 
         # AVX2
         RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build --release --bin yume-pdq --features "cli" --target x86_64-unknown-linux-musl
