@@ -723,12 +723,12 @@ fn main() {
 
     for out_i in 0..127 {
         let in_i = lerp(0.0, 512.0, out_i, 127);
+        let index = in_i.round() as usize;
+
         writeln!(
             convolution_offset_file,
             "    {}, // {} -> {}",
-            (in_i.round() as usize),
-            out_i,
-            in_i
+            index, out_i, in_i
         )
         .unwrap();
     }
