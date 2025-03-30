@@ -51,6 +51,8 @@ Our definition of "accurate enough to match" was based on a worst-case FNR (fals
 
   - To further reduce possibility of errors when both performance and accuracy are important, it is recommended to use yume-pdq in a "hash filter"-like configuration (i.e. increasing the threshold for a "potential match" by another 8 bits to (to 39 bits), and perform a more precise comparison if the image was flagged as a "potential match").
 
+  - It should also be noted that apart from statistical error rates, perceptual hash have systematic errors that cause inherent Type-I and Type-II errors that are not associated with minor variations in implementation. This is a systematic error that exist in both "reference" implementations and yume-pdq, for example cropping an image by an imperceptible amount can cause [~18 bit difference](https://github.com/darwinium-com/pdqhash/blob/1a5f66f635758ee441d8884e1c15203a2ace995d/README.md#offering-similarity-resilience) using identical, reference-level officially endorsed implementations, reducing the margin for an FNR by 18 bits.
+
 Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves are written with consideration to minimize possible issues by:
   -  not having data-dependent jumps or data-dependent indexing
   -  Add debug time bound assertions to catch SIMD reading out of bounds at test time
