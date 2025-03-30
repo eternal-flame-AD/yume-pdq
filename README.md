@@ -33,7 +33,7 @@ Fit into an existing image processing pipeline rather than defining our own, if 
 
 Parallelize well up to the memory bandwidth limit.
 
-Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. At present, the official docs require 10 bits when quality > 0.8 to be considered "correct" and we are currently right on the border (see [Accuracy on test set](#accuracy-on-test-set)). However the threshold for matching is 31 bits so we consider this not important for the purpose of matching.
+Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. At present, the official docs require 10 bits when quality > 0.8 to be considered "correct" and we are currently right on the border (see [Accuracy on test set](#accuracy-on-test-set)). However the threshold for matching is 31 bits so we consider this not important for the purpose of matching. This also means you _should NOT_ submit hashes to databases using output of any optimized kernels in this library.
 
 Our definition of "accurate enough to match" was based on a worst-case FNR (false negative rate) computed using birthday paradox, assuming such as statistical model:
 
@@ -48,6 +48,8 @@ Our definition of "accurate enough to match" was based on a worst-case FNR (fals
   This yields `(1 / 2^((31 - $worst_distance) / 2)) * 100% / $test_set_size`, which currently computes to 0.069% upper bound FNR (24 bits) for the 100 images in DISC21 test set ([logs](fnr-rest/log.txt)) (by assuming all images are as "bad" as the 2 out of 100 images that yielded this difference), and 0.00076% when using a more optimistic average distance (11 bits) to estimate this. It should also be noted that PDQ is a perceptual hash and can be malleable to imperceptible transformations (such as minor warping), thus an on-average 10-bits off implementation does not translate to 1024 times higher FNR in real-world fuzzy matching.
 
   - The main hypothesized source of difference than a faithful implementation is because of a changed size of input dimension for DCT2D transformation (we increased to 127x127 from the official 64x64 to make the loss from the compression from 512x512 lower and adapt to modern CPU architecture), which could potentially capture _more_ input information to compress into frequency domain (as DCT2D has ~4x more pixels to "sample" frequency domain information from) leading to a different numerical result, but is actually more stable on such malleable images with very sharp edges. If this hypothesis holds, the real-world FNR is likely orders-of-magnitude lower than the naive birthday paradox estimate above.
+
+  - To further reduce possibility of errors when both performance and accuracy are important, it is recommended to use yume-pdq in a "hash filter"-like configuration (i.e. increasing the threshold for a "potential match" by another 8 bits to (to 39 bits), and perform a more precise comparison if the image was flagged as a "potential match").
 
 Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves are written with consideration to minimize possible issues by:
   -  not having data-dependent jumps or data-dependent indexing
