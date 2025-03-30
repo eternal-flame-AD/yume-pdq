@@ -31,11 +31,18 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
 
 Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. At present, the official docs require 10 bits when quality > 0.8 to be considered "correct" and we are currently right on the border (see [Accuracy on test set](#accuracy-on-test-set)). However the threshold for matching is 31 bits so we consider this not important for the purpose of matching.
 
-Our definition of "accurate enough to match" was based on a worst-case FNR (false negative rate) computed using birthday paradox: `(1 / 2^((31 - $worst_distance) / 2)) * 100% / $test_set_size`, which currently yields 0.069% worst-case FNR (24 bits) for the 100 images in DISC21 test set ([logs](fnr-rest/log.txt)), and 0.00076% when using a more optimistic average distance (11 bits) to estimate the FNR. It should also be noted that PDQ is a perceptual hash and can be malleable to imperceptible transformations (such as minor warping), thus an on-average 10-bits off implementation does not translate to 1024 times higher FNR in real-world fuzzy matching.
-  - This is a worst-case statistical model that assumes (all are highly conservative and does not hold true w.r.t. perceptual hash properties):
-    1. Bit-flips are completely random and independent (i.e. no parts of an hash are more malleable than others to both implementations)
-    2. All bit-flips happen to flip originally matching bits to non-matching
-    3. The reference implementation is perfect in compressing original image into frequency domain.
+Our definition of "accurate enough to match" was based on a worst-case FNR (false negative rate) computed using birthday paradox, assuming such as statistical model:
+
+  - We have an unknown "ground truth" in the DCT transformation that perfectly captures the original image (the "truth" that stays consistent across minor transformations PDQ was designed to detect)
+  - We have an official definition of "positive" images generated using a lossy DCT, to match with our, also lossy DCT.
+  - An image is a "positive" if the number of bit flips between the two lossy DCTs is less than 31 bits (per official definition).
+  - We can assume a worst-case scenario that results in a birthday paradox scenario, where:
+      1. Bits are all i.i.d. uniform variables (i.e. no parts of an hash are more malleable than others, in reality some parts of hash are much more likely to flip than others)
+      2. All bit-flips happen to make the two lossy implementations diverge (in reality this this is also subject to probability, but we assume the worst-case)
+      3. The reference implementation is perfect in that it is stable in itself against minor transformations.
+
+  This yields `(1 / 2^((31 - $worst_distance) / 2)) * 100% / $test_set_size`, which currently computes to 0.069% worst-case FNR (24 bits) for the 100 images in DISC21 test set ([logs](fnr-rest/log.txt)), and 0.00076% when using a more optimistic average distance (11 bits) to estimate this. It should also be noted that PDQ is a perceptual hash and can be malleable to imperceptible transformations (such as minor warping), thus an on-average 10-bits off implementation does not translate to 1024 times higher FNR in real-world fuzzy matching.
+
   - The main hypothesized source of difference than a faithful implementation is because of a changed size of input dimension for DCT2D transformation (we increased to 127x127 from the official 64x64 to make the loss from the compression from 512x512 lower and adapt to modern CPU architecture), which could potentially capture _more_ input information to compress into frequency domain (as DCT2D has ~4x more pixels to "sample" frequency domain information from) leading to a different numerical result, but is actually more stable on such malleable images with very sharp edges. If this hypothesis holds, the real-world FNR is likely orders-of-magnitude lower than the naive birthday paradox estimate above.
 
 Do not dictate how the original 512x512 pixel image is obtained, if a server is processing UGC images they likely already are doing resizing, and adding a couple microseconds of CPU time per request can make a large difference vs. milliseconds for a high level API that takes arbitrary image, resize it (again, potentially doubling latency) and do a faithfully precise hash (drains more CPU time from the server).
