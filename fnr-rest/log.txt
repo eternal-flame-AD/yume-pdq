@@ -1,0 +1,198 @@
+=== Feature flag information ===
+
+  Capability of this binary: This yume-pdq kernel uses LLVM-IR guided SIMD (portable-simd). Check the supported CPU features for your vectorization backend.
+  Supported CPU features: adx,aes,avx,avx2,avx512bf16,avx512bitalg,avx512bw,avx512cd,avx512dq,avx512f,avx512ifma,avx512vbmi,avx512vbmi2,avx512vl,avx512vnni,avx512vpopcntdq,bmi1,bmi2,cmpxchg16b,f16c,fma,fxsr,gfni,lahfsahf,lzcnt,movbe,pclmulqdq,popcnt,prfchw,rdrand,rdseed,sha,sse,sse2,sse3,sse4.1,sse4.2,sse4a,ssse3,vaes,vpclmulqdq,x87,xsave,xsavec,xsaveopt,xsaves
+
+=== Runtime Routing Information ===
+
+  Runtime decision: portable-simd (guided vectorization)
+
+  Runtime decision details: PortableSimd<f32x8>
+
+  Router type: yume_pdq::kernel::portable_simd::PortableSimdF32Kernel<8>
+PdqHash/assets/DISC21/R050000.jpg
+PdqHash/assets/DISC21/R050000.jpg: 20/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050001.jpg
+PdqHash/assets/DISC21/R050001.jpg: 8/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050002.jpg
+PdqHash/assets/DISC21/R050002.jpg: 4/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050003.jpg
+PdqHash/assets/DISC21/R050003.jpg: 16/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050004.jpg
+PdqHash/assets/DISC21/R050004.jpg: 10/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050005.jpg
+PdqHash/assets/DISC21/R050005.jpg: 12/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050006.jpg
+PdqHash/assets/DISC21/R050006.jpg: 12/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050007.jpg
+PdqHash/assets/DISC21/R050007.jpg: 10/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050008.jpg
+PdqHash/assets/DISC21/R050008.jpg: 12/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050009.jpg
+PdqHash/assets/DISC21/R050009.jpg: 6/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050010.jpg
+PdqHash/assets/DISC21/R050010.jpg: 12/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050012.jpg
+PdqHash/assets/DISC21/R050012.jpg: 12/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050013.jpg
+PdqHash/assets/DISC21/R050013.jpg: 11/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050014.jpg
+PdqHash/assets/DISC21/R050014.jpg: 14/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050015.jpg
+PdqHash/assets/DISC21/R050015.jpg: 10/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050016.jpg
+PdqHash/assets/DISC21/R050016.jpg: 10/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050017.jpg
+PdqHash/assets/DISC21/R050017.jpg: 10/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050018.jpg
+PdqHash/assets/DISC21/R050018.jpg: 8/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050019.jpg
+PdqHash/assets/DISC21/R050019.jpg: 5/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050020.jpg
+PdqHash/assets/DISC21/R050020.jpg: 12/255 (worst so far: 20)
+PdqHash/assets/DISC21/R050021.jpg
+PdqHash/assets/DISC21/R050021.jpg: 24/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050023.jpg
+PdqHash/assets/DISC21/R050023.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050024.jpg
+PdqHash/assets/DISC21/R050024.jpg: 15/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050025.jpg
+PdqHash/assets/DISC21/R050025.jpg: 4/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050026.jpg
+PdqHash/assets/DISC21/R050026.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050027.jpg
+PdqHash/assets/DISC21/R050027.jpg: 3/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050028.jpg
+PdqHash/assets/DISC21/R050028.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050029.jpg
+PdqHash/assets/DISC21/R050029.jpg: 15/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050030.jpg
+PdqHash/assets/DISC21/R050030.jpg: 16/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050031.jpg
+PdqHash/assets/DISC21/R050031.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050032.jpg
+PdqHash/assets/DISC21/R050032.jpg: 4/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050033.jpg
+PdqHash/assets/DISC21/R050033.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050034.jpg
+PdqHash/assets/DISC21/R050034.jpg: 18/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050035.jpg
+PdqHash/assets/DISC21/R050035.jpg: 18/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050037.jpg
+PdqHash/assets/DISC21/R050037.jpg: 4/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050039.jpg
+PdqHash/assets/DISC21/R050039.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050040.jpg
+PdqHash/assets/DISC21/R050040.jpg: 6/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050041.jpg
+PdqHash/assets/DISC21/R050041.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050042.jpg
+PdqHash/assets/DISC21/R050042.jpg: 18/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050043.jpg
+PdqHash/assets/DISC21/R050043.jpg: 11/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050044.jpg
+PdqHash/assets/DISC21/R050044.jpg: 11/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050045.jpg
+PdqHash/assets/DISC21/R050045.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050046.jpg
+PdqHash/assets/DISC21/R050046.jpg: 14/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050047.jpg
+PdqHash/assets/DISC21/R050047.jpg: 19/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050048.jpg
+PdqHash/assets/DISC21/R050048.jpg: 18/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050049.jpg
+PdqHash/assets/DISC21/R050049.jpg: 22/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050050.jpg
+PdqHash/assets/DISC21/R050050.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050051.jpg
+PdqHash/assets/DISC21/R050051.jpg: 14/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050052.jpg
+PdqHash/assets/DISC21/R050052.jpg: 7/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050053.jpg
+PdqHash/assets/DISC21/R050053.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050054.jpg
+PdqHash/assets/DISC21/R050054.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050055.jpg
+PdqHash/assets/DISC21/R050055.jpg: 6/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050056.jpg
+PdqHash/assets/DISC21/R050056.jpg: 7/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050057.jpg
+PdqHash/assets/DISC21/R050057.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050058.jpg
+PdqHash/assets/DISC21/R050058.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050059.jpg
+PdqHash/assets/DISC21/R050059.jpg: 9/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050060.jpg
+PdqHash/assets/DISC21/R050060.jpg: 14/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050061.jpg
+PdqHash/assets/DISC21/R050061.jpg: 6/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050062.jpg
+PdqHash/assets/DISC21/R050062.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050064.jpg
+PdqHash/assets/DISC21/R050064.jpg: 14/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050066.jpg
+PdqHash/assets/DISC21/R050066.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050067.jpg
+PdqHash/assets/DISC21/R050067.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050068.jpg
+PdqHash/assets/DISC21/R050068.jpg: 24/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050069.jpg
+PdqHash/assets/DISC21/R050069.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050070.jpg
+PdqHash/assets/DISC21/R050070.jpg: 9/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050071.jpg
+PdqHash/assets/DISC21/R050071.jpg: 15/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050072.jpg
+PdqHash/assets/DISC21/R050072.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050073.jpg
+PdqHash/assets/DISC21/R050073.jpg: 14/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050074.jpg
+PdqHash/assets/DISC21/R050074.jpg: 18/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050075.jpg
+PdqHash/assets/DISC21/R050075.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050076.jpg
+PdqHash/assets/DISC21/R050076.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050077.jpg
+PdqHash/assets/DISC21/R050077.jpg: 10/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050078.jpg
+PdqHash/assets/DISC21/R050078.jpg: 24/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050079.jpg
+PdqHash/assets/DISC21/R050079.jpg: 16/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050080.jpg
+PdqHash/assets/DISC21/R050080.jpg: 18/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050081.jpg
+PdqHash/assets/DISC21/R050081.jpg: 6/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050082.jpg
+PdqHash/assets/DISC21/R050082.jpg: 9/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050085.jpg
+PdqHash/assets/DISC21/R050085.jpg: 6/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050086.jpg
+PdqHash/assets/DISC21/R050086.jpg: 24/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050087.jpg
+PdqHash/assets/DISC21/R050087.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050088.jpg
+PdqHash/assets/DISC21/R050088.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050089.jpg
+PdqHash/assets/DISC21/R050089.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050090.jpg
+PdqHash/assets/DISC21/R050090.jpg: 8/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050092.jpg
+PdqHash/assets/DISC21/R050092.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050093.jpg
+PdqHash/assets/DISC21/R050093.jpg: 16/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050094.jpg
+PdqHash/assets/DISC21/R050094.jpg: 6/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050095.jpg
+PdqHash/assets/DISC21/R050095.jpg: 13/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050096.jpg
+PdqHash/assets/DISC21/R050096.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050097.jpg
+PdqHash/assets/DISC21/R050097.jpg: 12/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050098.jpg
+PdqHash/assets/DISC21/R050098.jpg: 14/255 (worst so far: 24)
+PdqHash/assets/DISC21/R050099.jpg
+PdqHash/assets/DISC21/R050099.jpg: 10/255 (worst so far: 24)
+Worst distance: 24
+Worst-case false negative rate: 0.06868131868131869 %
+Average distance: 11
+Optimistic false negative rate: 0.000758828534068668 %
