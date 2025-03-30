@@ -24,7 +24,7 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
       - [Image Processing](#image-processing)
     - [Why is my performance lower?](#why-is-my-performance-lower)
   - [Accuracy on test set](#accuracy-on-test-set)
-  - [API Usage](#api-usage)
+  - [API Usage (and dihedral transformations)](#api-usage-and-dihedral-transformations)
   - [License and attributions](#license-and-attributions)
 
 ## Design Goals
@@ -32,7 +32,7 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
 Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. At present, the official docs require 10 bits when quality > 0.8 to be considered "correct" and we are currently right on the border (see [Accuracy on test set](#accuracy-on-test-set)). However the threshold for matching is 31 bits so we consider this not important for the purpose of matching.
 
 Our definition of "accurate enough to match" was based on a worst-case FNR (false negative rate) computed using birthday paradox: `(1 / 2^((31 - $worst_distance) / 2)) * 100% / num_images`, which currently yields 0.069% worst-case FNR (24 bits) for the 100 images in DISC21 test set ([logs](fnr-rest/log.txt)), and 0.00076% when using a more optimistic average distance (11 bits) to estimate the FNR. It should also be noted that PDQ is a perceptual hash and can be malleable to imperceptible transformations (such as minor warping), thus an on-average 10-bits off implementation does not translate to 1024 times higher FNR in real-world fuzzy matching.
-  - The main hypothesized source of difference than a faithful implementation is because of a changed size of input dimension for DCT2D transformation (we increased to 127x127 from the official 64x64 to make the loss from the compression from 512x512 lower and adapt to modern CPU architecture), which could potentially capture _more_ input frequency information (as DCT2D has ~4x more pixels to "sample" frequency domain information from) leading to a different numerical result, but is actually more stable on such malleable images with very sharp edges. If this hypothesis holds, the real-world FNR is likely orders-of-magnitude lower than the naive birthday paradox estimate above.
+  - The main hypothesized source of difference than a faithful implementation is because of a changed size of input dimension for DCT2D transformation (we increased to 127x127 from the official 64x64 to make the loss from the compression from 512x512 lower and adapt to modern CPU architecture), which could potentially capture _more_ input information to compress into frequency domain (as DCT2D has ~4x more pixels to "sample" frequency domain information from) leading to a different numerical result, but is actually more stable on such malleable images with very sharp edges. If this hypothesis holds, the real-world FNR is likely orders-of-magnitude lower than the naive birthday paradox estimate above.
 
 Do not dictate how the original 512x512 pixel image is obtained, if a server is processing UGC images they likely already are doing resizing, and adding a couple microseconds of CPU time per request can make a large difference vs. milliseconds for a high level API that takes arbitrary image, resize it (again, potentially doubling latency) and do a faithfully precise hash (drains more CPU time from the server).
 
@@ -238,7 +238,7 @@ Note:
 |                                                | Default | 26/256 (10.2%)          | 10/256 (3.9%)     | 10/256 (3.9%)     |
 |                                                | Ref32   | -                       | -                 | 0/256 (0.0%)      |
 
-## API Usage
+## API Usage (and dihedral transformations)
 
 The Rust API is fully generic over almost all possible parameters, so you don't need to remember constants or write these magic numbers in your code, you can just use type inference provided by generic_array and typenum crates.
 
@@ -249,7 +249,7 @@ use yume_pdq::{GenericArray, smart_kernel};
 
 fn main() {
     // Fill with horizontal FM pattern - expect a strong horizontal frequency component in the DCT response
-    // this demonstrates the "thing" DCT does: "it 'unwraps' one level of frequency domain information into spatial domain"
+    // this demonstrates the "thing" DCT does: "it 'wraps' one level of frequency domain information into spatial domain"
     // if we just do a sine wave without modulation, it will end up as a constant matrix and quality will be 0.
     let mut frequency = 4.0; // create 4 waves of stripes
     let modulation = frequency / 512.0; // make it exactly a whole number w.r.t. the matrix width so it shows up as nice vertical stripes.
@@ -282,6 +282,10 @@ fn main() {
         &mut row_tmp,
         &mut pdqf,
     );
+
+    // computing hashes with dihedral transformations can be done more efficiently by transforming the "pdqf buffer"
+    // see: https://github.com/darwinium-com/pdqhash/blob/1a5f66f635758ee441d8884e1c15203a2ace995d/README.md#consider-additional-image-transformations
+    // a generic API is available in kernel::threshold that helps recompute the final hash from a transformed pdqf buffer
 
     // this does the same thing but not require you to ask for a threshold
     let quality_easy = yume_pdq::hash(
