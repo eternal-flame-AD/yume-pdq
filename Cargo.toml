@@ -62,7 +62,7 @@ portable-simd = []
 portable-simd-fma = ["portable-simd", "std"]
 prefer-x86-intrinsics = []
 lut-utils = []
-cli = ["std", "dep:clap", "dep:rand", "lut-utils"]
+cli = ["std", "dep:clap", "dep:rand", "lut-utils", "rand/std"]
 hpc = ["std", "dep:core_affinity"]
 
 [[bin]]

@@ -3,7 +3,7 @@
 [![Builds](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/yume-pdq/build.yml?branch=main&label=Builds)](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/build.yml)
 [![docs.rs](https://img.shields.io/docsrs/yume-pdq)](https://docs.rs/yume-pdq/)
 
-A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm that prioritizes low latency, high throughput with statistically low upper-bound false negative rate, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only), with no-std and LLVM SafeStack+CFI hardening support.
+A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm (hyperparameter altered to optimize for modern CPUs) that prioritizes low latency, high throughput with statistically low upper-bound false negative rate, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only), with no-std and LLVM SafeStack+CFI hardening support.
 
 ## Table of Contents
 
@@ -13,6 +13,7 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
   - [System Requirements](#system-requirements)
     - [Building](#building)
     - [Execution](#execution)
+    - [Profiling](#profiling)
   - [Releases](#releases)
   - [Pipeline Overview](#pipeline-overview)
   - [Binary usage](#binary-usage)
@@ -29,7 +30,7 @@ A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://
 
 ## Design Goals
 
-Fit into an existing image processing pipeline rather than defining our own, if a server is processing UGC images they likely already are doing resizing, and adding a couple microseconds of CPU time per request can make a large difference vs. milliseconds for a high level API that takes arbitrary image, resize it (again, potentially doubling latency) and do a faithfully precise hash (drains more CPU time from the server).
+Fit into an existing image processing pipeline rather than defining our own, if a server is processing UGC images they likely already are doing resizing, and adding a couple microseconds of CPU time per request can make a large difference vs. milliseconds for a high level API that takes arbitrary image, resize it (again, potentially doubling latency) and do a faithfully precise hash (drains more CPU time from the server). This also means `yume-pdq` is a low-level abstraction and you are responsible for bringing your own logic to get any data into the PDQ specification (512x512x1 grayscale image in the 0.0-255.0 range required by the library or 0-255 required by the CLI).
 
 Parallelize well up to the memory bandwidth limit.
 
@@ -75,7 +76,20 @@ No-std support.
 - The portable-simd kernel is adaptive to your platform architecture and falls back to scalar instructions if necessary, I have tested on Apple Silicon (NEON) and Google Pixel 9 Pro (SVE2), both results in 4x+ speedup over the generic auto-vectorized scalar kernel.
 - To use f32x8 AVX2 kernel, you need an x86_64 CPU with AVX2 and FMA support
 - To use f32x16 AVX512 kernel, you need an x86_64 CPU with AVX512F support
- 
+
+### Profiling
+
+The command I use for profiling on AMD CPUs is (add your specific feature flag when applicable), you should be able to generalize it to your own tool (the gist is give it 3 cores and pin the ping-pong buffer to 2 profiled cores):
+
+```bash
+#!/bin/bash
+
+RUSTFLAGS="-Cdebuginfo=full -Ctarget-cpu=native" cargo build --bin yume-pdq --features "cli hpc" --release
+
+
+AMDuProfCLI collect --terminate --start-delay 10 --config data_access --affinity 0,1,2 -c 0-1 -d 30 -o assess-amd-avx512/ target/release/yume-pdq busyloop --core0 0 --core1 1
+```
+
 ## Releases
 
 We provide pre-built binaries, shared objects, and static libraries for Linux, macOS, and Windows, currently for these combinations:
@@ -103,13 +117,13 @@ You can download the binaries from the [GitHub release page](https://github.com/
 
 To save cloning this repo if you just want a published version (check on [crates.io](https://crates.io/crates/yume-pdq)), replace `cargo build --release` with `cargo install yume-pdq[@<version>]`.
 
-Compilation for your own CPU (AVX2 if available, falls back to an auto-vectorized scalar kernel) is done usually with:
+Compilation for your own CPU (AVX2, NEON or SVE2 if available, falls back to an auto-vectorized scalar kernel) is done usually with (requires a nightly compiler when using `portable-simd`):
 
 ```bash
-RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features "cli"
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features "cli portable-simd-fma"
 ```
 
-If you want a generic binary that only assumes AVX2 and FMA is available to use the optimized kernel, you can build with:
+If you want a X86_64 specific binary that only assumes AVX2 and FMA is available to use the optimized kernel, you can build with (works with any Rust channel but uses less maintainable and more error-prone intrinsics):
 
 ```bash
 RUSTFLAGS="-Ctarget-feature=+avx2,+fma" cargo build --release --features "cli"

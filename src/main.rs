@@ -167,6 +167,27 @@ Usage examples with common tools:
                 ),
         )
         .subcommand(
+            Command::new("busyloop")
+                .about("Catch in an infinite loop by feeding random data, for profiling usage")
+                .long_about(
+                    "Catch in an infinite loop by feeding random data, for profiling usage",
+                )
+                .arg(
+                    Arg::new("core0")
+                        .long("core0")
+                        .help("Pin processing to core 0")
+                        .value_parser(value_parser!(usize))
+                        .hide(!cfg!(feature = "hpc")),
+                )
+                .arg(
+                    Arg::new("core1")
+                        .long("core1")
+                        .help("Pin processing to core 1")
+                        .value_parser(value_parser!(usize))
+                        .hide(!cfg!(feature = "hpc")),
+                )
+        )
+        .subcommand(
             Command::new("random-stream")
                 .about("Generate random byte stream")
                 .long_about(
@@ -554,6 +575,23 @@ fn type_name_of<T>(_: &T) -> &'static str {
     std::any::type_name::<T>()
 }
 
+struct RandReadAdaptor<R: rand::RngCore + Send + Sync> {
+    rng: R,
+}
+
+impl<R: rand::RngCore + Send + Sync> RandReadAdaptor<R> {
+    fn new(rng: R) -> Self {
+        Self { rng }
+    }
+}
+
+impl<R: rand::RngCore + Send + Sync> std::io::Read for RandReadAdaptor<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.rng.fill_bytes(buf);
+        Ok(buf.len())
+    }
+}
+
 fn main() {
     let matches = build_cli().get_matches();
 
@@ -591,6 +629,122 @@ fn main() {
             println!("  Runtime decision details: {:?}", ident);
             println!();
             println!("  Router type: {}", type_name_of(&kernel));
+        }
+        Some(("busyloop", sub_matches)) => {
+            let _ = sub_matches;
+            use std::hash::BuildHasher;
+            let key = RandomState::new().hash_one(0);
+            let seeded = rand::rngs::SmallRng::seed_from_u64(key);
+            let rng = seeded;
+
+            let (kernel0, kernel1) = {
+                (
+                    yume_pdq::kernel::smart_kernel(),
+                    yume_pdq::kernel::smart_kernel(),
+                )
+            };
+
+            #[cfg(feature = "hpc")]
+            let arg_core0 = sub_matches.get_one::<usize>("core0").cloned();
+            #[cfg(feature = "hpc")]
+            let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
+
+            let processor =
+                PairProcessor::<_, _, _, OUTPUT_TYPE_RAW, OUTPUT_SEPARATOR_NONE, false>::new_fast(
+                    std::io::BufReader::new(RandReadAdaptor::new(rng)),
+                    std::io::sink(),
+                );
+            thread::scope(|s| unsafe {
+                let j1 = thread::Builder::new()
+                    .stack_size(8 << 20)
+                    .name(String::from("worker0"))
+                    .spawn_scoped(s, || {
+                        processor.loop_thread::<true, true>(
+                            kernel0,
+                            #[cfg(feature = "hpc")]
+                            arg_core0,
+                        )
+                    })
+                    .expect("Failed to spawn worker thread 0");
+
+                let j2 = thread::Builder::new()
+                    .stack_size(8 << 20)
+                    .name(String::from("worker1"))
+                    .spawn_scoped(s, || {
+                        processor.loop_thread::<true, true>(
+                            kernel1,
+                            #[cfg(feature = "hpc")]
+                            arg_core1,
+                        )
+                    })
+                    .expect("Failed to spawn worker thread 1");
+
+                let mut time_since_last_stat = std::time::Instant::now();
+                let mut elapsed = std::time::Duration::ZERO;
+                let mut last_frames_processed_half = 0;
+
+                loop {
+                    std::thread::park_timeout(std::time::Duration::from_millis(1000));
+                    let now = std::time::Instant::now();
+                    let delta_time = now.duration_since(time_since_last_stat);
+                    if delta_time > std::time::Duration::from_secs(1) {
+                        elapsed += delta_time;
+                        time_since_last_stat = now;
+                        let new_frames_processed_half = processor
+                            .buffers
+                            .half_frames_processed
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        // assuming 100k frames a second (more than 10 times my maximum possible benchmark speed, only achievable by feeding with /dev/zero or PRNG like Xorshift)
+                        let delta_frames =
+                            (new_frames_processed_half - last_frames_processed_half) * 2;
+                        last_frames_processed_half = new_frames_processed_half;
+                        let delta_time_us = delta_time.as_micros() as u64;
+                        eprintln!(
+                            "{} new frames processed ({} fps), {} total frames processed ({} fps overall)",
+                            delta_frames,
+                            1_000_000 * delta_frames / delta_time_us,
+                            new_frames_processed_half * 2,
+                            // this LHS is likely to be the first to overflow, ( 1_000_000 * 2 ) < 2^21, so we have at least 2^43 * 2 frames to work with
+                            // it takes ~218.15 days to overflow
+                            1_000_000 * 2 * last_frames_processed_half / elapsed.as_micros() as u64
+                        );
+                    }
+                    if j1.is_finished() {
+                        match j1.join() {
+                            Ok(r) => match r {
+                                Ok(_) => {
+                                    std::process::exit(0);
+                                }
+                                Err(e) => {
+                                    eprintln!("IO Error in worker thread 0: {:?}", e);
+                                    std::process::exit(5);
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Fatal Error in worker thread 0: {:?}", e);
+                                std::process::exit(128);
+                            }
+                        }
+                    }
+                    if j2.is_finished() {
+                        match j2.join() {
+                            Ok(r) => match r {
+                                Ok(_) => {
+                                    std::process::exit(0);
+                                }
+                                Err(e) => {
+                                    eprintln!("IO Error in worker thread 1: {:?}", e);
+                                    std::process::exit(5);
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Fatal Error in worker thread 1: {:?}", e);
+                                std::process::exit(128);
+                            }
+                        }
+                    }
+                }
+            });
         }
         Some(("random-stream", _)) => {
             use rand::RngCore;
