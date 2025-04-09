@@ -123,7 +123,8 @@ fn build_cli() -> Command {
         .about("Fast PDQ perceptual image hashing implementation")
         .long_about(concat!(
 r#"
-A high-performance implementation of the PDQ perceptual image hashing algorithm. Supports various input/output formats and hardware acceleration.
+A hand-vectorized implementation of the Facebook Perceptual Hash (PDQ) algorithm,
+hyperparameter altered to optimize for modern CPUs.
 
 "#, env!("TARGET_SPECIFIC_CLI_MESSAGE"), r#"
 
@@ -156,12 +157,12 @@ Usage examples with common tools:
 
    >ffmpeg -f lavfi -i testsrc=size=512x512:rate=1  -pix_fmt gray  -f rawvideo - | yume-pdq pipe -f bin
 
-       Output: <BINARY_HASH>, expect to see thousands of FPS reported by ffmpeg!
+       Output: 100001011<...>, expect to see thousands of FPS reported by ffmpeg!
 
  * Process an arbitrary list of images, return the hash in ASCII hex format, pad by a line feed:
 
    > for i in (seq 1 1000); ln -s (realpath test-data/aaa-orig.jpg) /tmp/test/$i.jpg; end
-   >  time convert 'test-data/*' -resize 512x512! -colorspace gray -depth 8 gray:- \
+   >  time convert '/tmp/test/*' -resize 512x512! -colorspace gray -depth 8 gray:- \
    >    | yume-pdq pipe -f 'hex+lf'
 
        Output: d8f8f0cee0f4a84f06370a32038f67f0b36e2ed596621e1d33e6b39c4e9c9b22 (*1000 lines)
@@ -262,6 +263,13 @@ Usage examples with common tools:
                         .help("Pin processing to core 1")
                         .value_parser(value_parser!(usize))
                         .hide(!cfg!(feature = "hpc")),
+                )
+                .arg(
+                    Arg::new("input-format")
+                        .long("input-format")
+                        .help("Input format")
+                        .default_value("luma8")
+                        .long_help("Input format. Use 'luma8' for grayscale images, 'rgb8' for RGB images, or 'rgba8' for RGBA images."),
                 )
         )
         .subcommand(
@@ -794,6 +802,10 @@ fn main() {
             println!("  Router type: {}", type_name_of(&kernel));
         }
         Some(("busyloop", sub_matches)) => {
+            let arg_input_format = sub_matches
+                .get_one::<String>("input-format")
+                .unwrap()
+                .clone();
             let _ = sub_matches;
             use std::hash::BuildHasher;
             let key = RandomState::new().hash_one(0);
@@ -812,103 +824,122 @@ fn main() {
             #[cfg(feature = "hpc")]
             let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
 
-            let processor = PairProcessor::<_, _, _, INPUT_FORMAT_RGBA8, OUTPUT_TYPE_RAW>::new_fast(
-                std::io::BufReader::new(rng),
-                std::io::sink(),
-            );
-            thread::scope(|s| unsafe {
-                let j1 = thread::Builder::new()
-                    .stack_size(8 << 20)
-                    .name(String::from("worker0"))
-                    .spawn_scoped(s, || {
-                        processor.loop_thread::<true, true>(
-                            kernel0,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            arg_core0,
-                        )
-                    })
-                    .expect("Failed to spawn worker thread 0");
+            macro_rules! match_input_format {
+                ($($input_format:literal => $iformat:ident),* $(,)?) => {
+                    match arg_input_format.as_str() {
+                        $(
+                            $input_format => {
+                                let processor = PairProcessor::<_, _, _, $iformat, OUTPUT_TYPE_RAW>::new_fast(
+                                    std::io::BufReader::new(rng),
+                                    std::io::sink(),
+                                );
 
-                let j2 = thread::Builder::new()
-                    .stack_size(8 << 20)
-                    .name(String::from("worker1"))
-                    .spawn_scoped(s, || {
-                        processor.loop_thread::<true, true>(
-                            kernel1,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            arg_core1,
-                        )
-                    })
-                    .expect("Failed to spawn worker thread 1");
+                                thread::scope(|s| unsafe {
+                                    let j1 = thread::Builder::new()
+                                        .stack_size(8 << 20)
+                                        .name(String::from("worker0"))
+                                        .spawn_scoped(s, || {
+                                            processor.loop_thread::<true, true>(
+                                                kernel0,
+                                                b"",
+                                                #[cfg(feature = "hpc")]
+                                                arg_core0,
+                                            )
+                                        })
+                                        .expect("Failed to spawn worker thread 0");
 
-                let mut time_since_last_stat = std::time::Instant::now();
-                let mut elapsed = std::time::Duration::ZERO;
-                let mut last_frames_processed_half = 0;
+                                    let j2 = thread::Builder::new()
+                                        .stack_size(8 << 20)
+                                        .name(String::from("worker1"))
+                                        .spawn_scoped(s, || {
+                                            processor.loop_thread::<true, true>(
+                                                kernel1,
+                                                b"",
+                                                #[cfg(feature = "hpc")]
+                                                arg_core1,
+                                            )
+                                        })
+                                        .expect("Failed to spawn worker thread 1");
 
-                loop {
-                    std::thread::park_timeout(std::time::Duration::from_millis(1000));
-                    let now = std::time::Instant::now();
-                    let delta_time = now.duration_since(time_since_last_stat);
-                    if delta_time > std::time::Duration::from_secs(1) {
-                        elapsed += delta_time;
-                        time_since_last_stat = now;
-                        let new_frames_processed_half = processor
-                            .buffers
-                            .half_frames_processed
-                            .load(std::sync::atomic::Ordering::Relaxed);
-                        // assuming 100k frames a second (more than 10 times my maximum possible benchmark speed, only achievable by feeding with /dev/zero or PRNG like Xorshift)
-                        let delta_frames =
-                            (new_frames_processed_half - last_frames_processed_half) * 2;
-                        last_frames_processed_half = new_frames_processed_half;
-                        let delta_time_us = delta_time.as_micros() as u64;
-                        eprintln!(
-                            "{} new frames processed ({} fps), {} total frames processed ({} fps overall)",
-                            delta_frames,
-                            1_000_000 * delta_frames / delta_time_us,
-                            new_frames_processed_half * 2,
-                            // this LHS is likely to be the first to overflow, ( 1_000_000 * 2 ) < 2^21, so we have at least 2^43 * 2 frames to work with
-                            // it takes ~218.15 days to overflow
-                            1_000_000 * 2 * last_frames_processed_half / elapsed.as_micros() as u64
-                        );
-                    }
-                    if j1.is_finished() {
-                        match j1.join() {
-                            Ok(r) => match r {
-                                Ok(_) => {
-                                    std::process::exit(0);
-                                }
-                                Err(e) => {
-                                    eprintln!("IO Error in worker thread 0: {:?}", e);
-                                    std::process::exit(5);
-                                }
-                            },
-                            Err(e) => {
-                                eprintln!("Fatal Error in worker thread 0: {:?}", e);
-                                std::process::exit(128);
+                                    let mut time_since_last_stat = std::time::Instant::now();
+                                    let mut elapsed = std::time::Duration::ZERO;
+                                    let mut last_frames_processed_half = 0;
+
+                                    loop {
+                                        std::thread::park_timeout(std::time::Duration::from_millis(1000));
+                                        let now = std::time::Instant::now();
+                                        let delta_time = now.duration_since(time_since_last_stat);
+                                        if delta_time > std::time::Duration::from_secs(1) {
+                                            elapsed += delta_time;
+                                            time_since_last_stat = now;
+                                            let new_frames_processed_half = processor
+                                                .buffers
+                                                .half_frames_processed
+                                                .load(std::sync::atomic::Ordering::Relaxed);
+                                            // assuming 100k frames a second (more than 10 times my maximum possible benchmark speed, only achievable by feeding with /dev/zero or PRNG like Xorshift)
+                                            let delta_frames =
+                                                (new_frames_processed_half - last_frames_processed_half) * 2;
+                                            last_frames_processed_half = new_frames_processed_half;
+                                            let delta_time_us = delta_time.as_micros() as u64;
+                                            eprintln!(
+                                                "{} new frames processed ({} fps), {} total frames processed ({} fps overall)",
+                                                delta_frames,
+                                                1_000_000 * delta_frames / delta_time_us,
+                                                new_frames_processed_half * 2,
+                                                // this LHS is likely to be the first to overflow, ( 1_000_000 * 2 ) < 2^21, so we have at least 2^43 * 2 frames to work with
+                                                // it takes ~218.15 days to overflow
+                                                1_000_000 * 2 * last_frames_processed_half / elapsed.as_micros() as u64
+                                            );
+                                        }
+                                        if j1.is_finished() {
+                                            match j1.join() {
+                                                Ok(r) => match r {
+                                                    Ok(_) => {
+                                                        std::process::exit(0);
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("IO Error in worker thread 0: {:?}", e);
+                                                        std::process::exit(5);
+                                                    }
+                                                },
+                                                Err(e) => {
+                                                    eprintln!("Fatal Error in worker thread 0: {:?}", e);
+                                                    std::process::exit(128);
+                                                }
+                                            }
+                                        }
+                                        if j2.is_finished() {
+                                            match j2.join() {
+                                                Ok(r) => match r {
+                                                    Ok(_) => {
+                                                        std::process::exit(0);
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("IO Error in worker thread 1: {:?}", e);
+                                                        std::process::exit(5);
+                                                    }
+                                                },
+                                                Err(e) => {
+                                                    eprintln!("Fatal Error in worker thread 1: {:?}", e);
+                                                    std::process::exit(128);
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
                             }
-                        }
+
+                        )*
+                        _ => panic!("Invalid input format"),
                     }
-                    if j2.is_finished() {
-                        match j2.join() {
-                            Ok(r) => match r {
-                                Ok(_) => {
-                                    std::process::exit(0);
-                                }
-                                Err(e) => {
-                                    eprintln!("IO Error in worker thread 1: {:?}", e);
-                                    std::process::exit(5);
-                                }
-                            },
-                            Err(e) => {
-                                eprintln!("Fatal Error in worker thread 1: {:?}", e);
-                                std::process::exit(128);
-                            }
-                        }
-                    }
-                }
-            });
+                };
+            }
+
+            match_input_format! {
+                "luma8" => INPUT_FORMAT_LUMA8,
+                "rgb8" => INPUT_FORMAT_RGB8,
+                "rgba8" => INPUT_FORMAT_RGBA8,
+            }
         }
         Some(("random-stream", _)) => {
             use std::hash::BuildHasher;
