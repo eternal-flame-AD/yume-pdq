@@ -120,12 +120,11 @@ Usage examples with common tools:
                 .arg(
                     Arg::new("output_buffer")
                         .long("output-buffer")
-                        .help("Output buffer size in bytes")
                         .long_help(
-                            "Size of the output buffer in bytes. Larger buffers may improve performance \
-                             when writing to files or pipes.",
+                            "This flag is no longer used and have no effect.",
                         )
-                        .value_parser(value_parser!(u32)),
+                        .value_parser(value_parser!(u32))
+                        .hide(true),
                 )
                 .arg(
                     Arg::new("stats")
@@ -196,6 +195,28 @@ Usage examples with common tools:
                 ),
         )
         .subcommand(
+            Command::new("bench")
+                .hide(!cfg!(feature = "cli-bench"))
+                .about("Run a formal benchmark")
+                .long_about(
+                    "Run a formal benchmark using Criterion.rs using an internal synthetic image source.",
+                )
+                .arg(
+                    Arg::new("core0")
+                        .long("core0")
+                        .help("Core ID to run the benchmark on")
+                        .required(false)
+                        .hide(!cfg!(feature = "hpc")),
+                )
+                .arg(
+                    Arg::new("core1")
+                        .long("core1")
+                        .help("Core ID to run the benchmark on")
+                        .required(false)
+                        .hide(!cfg!(feature = "hpc")),
+                ),
+        )
+        .subcommand(
             Command::new("vectorization-info")
                 .about("Display vectorization information")
                 .long_about(
@@ -219,17 +240,16 @@ struct BufferPad {
     _pad: [f32; 16],
 }
 
+const OUTPUT_FLAG_UPPER: u8 = 128;
 const OUTPUT_TYPE_RAW: u8 = 0;
 const OUTPUT_TYPE_RAW_PREFIX_QUALITY: u8 = 1;
 const OUTPUT_TYPE_ASCII_HEX: u8 = 2;
+const OUTPUT_TYPE_ASCII_HEX_UPPER: u8 = OUTPUT_FLAG_UPPER | OUTPUT_TYPE_ASCII_HEX;
 const OUTPUT_TYPE_ASCII_BINARY: u8 = 3;
 const OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY: u8 = 4;
+const OUTPUT_TYPE_ASCII_HEX_UPPER_PREFIX_QUALITY: u8 =
+    OUTPUT_FLAG_UPPER | OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY;
 const OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY: u8 = 5;
-
-const OUTPUT_SEPARATOR_NONE: u8 = 0;
-const OUTPUT_SEPARATOR_CR: u8 = 1;
-const OUTPUT_SEPARATOR_LF: u8 = 2;
-const OUTPUT_SEPARATOR_CRLF: u8 = 3;
 
 #[repr(C)]
 struct PairBuffer<K: Kernel>
@@ -266,8 +286,6 @@ struct PairProcessor<
     R: Read + Send + Sync,
     W: Write + Send + Sync,
     const OUTPUT_TYPE: u8,
-    const OUTPUT_SEPARATOR: u8,
-    const OUTPUT_UPPER: bool,
 > where
     K::OutputDimension: DivisibleBy8,
 {
@@ -277,14 +295,8 @@ struct PairProcessor<
     writer: W,
 }
 
-impl<
-    K: Kernel + Send + Sync,
-    R: Read + Send + Sync,
-    W: Write + Send + Sync,
-    const OUTPUT_TYPE: u8,
-    const OUTPUT_SEPARATOR: u8,
-    const OUTPUT_UPPER: bool,
-> PairProcessor<K, R, W, OUTPUT_TYPE, OUTPUT_SEPARATOR, OUTPUT_UPPER>
+impl<K: Kernel + Send + Sync, R: Read + Send + Sync, W: Write + Send + Sync, const OUTPUT_TYPE: u8>
+    PairProcessor<K, R, W, OUTPUT_TYPE>
 where
     K::OutputDimension: DivisibleBy8,
     <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
@@ -325,6 +337,7 @@ where
     pub unsafe fn loop_thread<const I_AM_READING_INITIALLY: bool, const STATS: bool>(
         &self,
         mut kernel: K,
+        separator: &'static [u8],
         #[cfg(feature = "hpc")] pin_core: Option<usize>,
     ) -> Result<(), std::io::Error> {
         #[cfg(feature = "hpc")]
@@ -474,7 +487,7 @@ where
                                     if b >= 10 {
                                         const OFFSET_UPPER: u8 = b'A' - (b'9' + 1);
                                         const OFFSET_LOWER: u8 = b'a' - (b'9' + 1);
-                                        *a += if OUTPUT_UPPER {
+                                        *a += if OUTPUT_TYPE & OUTPUT_FLAG_UPPER != 0 {
                                             OFFSET_UPPER
                                         } else {
                                             OFFSET_LOWER
@@ -504,18 +517,8 @@ where
                         _ => unreachable!(),
                     }
 
-                    match OUTPUT_SEPARATOR {
-                        OUTPUT_SEPARATOR_NONE => {}
-                        OUTPUT_SEPARATOR_CR => {
-                            writer_mut.write_all(b"\r")?;
-                        }
-                        OUTPUT_SEPARATOR_LF => {
-                            writer_mut.write_all(b"\n")?;
-                        }
-                        OUTPUT_SEPARATOR_CRLF => {
-                            writer_mut.write_all(b"\r\n")?;
-                        }
-                        _ => unreachable!(),
+                    if !separator.is_empty() {
+                        writer_mut.write_all(separator)?;
                     }
 
                     writer_mut.flush()?;
@@ -534,41 +537,32 @@ where
     }
 }
 
-fn open_reader(spec: &str) -> Result<Box<dyn Read + Send + Sync>, std::io::Error> {
-    if spec == "-" {
-        Ok(Box::new(std::io::stdin()))
+fn open_reader(spec: &str) -> Result<std::io::BufReader<std::fs::File>, std::io::Error> {
+    use std::os::fd::{AsFd, FromRawFd, IntoRawFd};
+
+    let reader = if spec == "-" {
+        let stdin = std::io::stdin();
+        let fd = stdin.as_fd().try_clone_to_owned()?;
+        unsafe { std::fs::File::from_raw_fd(fd.into_raw_fd()) }
     } else {
-        println!("Taking input from {}", spec);
-        let file = std::fs::File::open(spec)?;
-        Ok(Box::new(file))
-    }
+        std::fs::File::open(spec)?
+    };
+
+    Ok(std::io::BufReader::new(reader))
 }
 
-fn open_writer(
-    spec: &str,
-    buffer: Option<u32>,
-) -> Result<Box<dyn Write + Send + Sync>, std::io::Error> {
-    if spec == "-" {
-        if let Some(buffer) = buffer {
-            Ok(Box::new(std::io::BufWriter::with_capacity(
-                buffer as usize,
-                std::io::stdout(),
-            )))
-        } else {
-            Ok(Box::new(std::io::stdout()))
-        }
+fn open_writer(spec: &str) -> Result<std::io::BufWriter<std::fs::File>, std::io::Error> {
+    use std::os::fd::{AsFd, FromRawFd, IntoRawFd};
+    const BUFFER_SIZE: usize = 512; // big enough for all outputs, we are flushing anyways
+    let writer = if spec == "-" {
+        let stdout = std::io::stdout();
+        let fd = stdout.as_fd().try_clone_to_owned()?;
+        unsafe { std::fs::File::from_raw_fd(fd.into_raw_fd()) }
     } else {
-        if let Some(buffer) = buffer {
-            let file = std::fs::File::create(spec)?;
-            Ok(Box::new(std::io::BufWriter::with_capacity(
-                buffer as usize,
-                file,
-            )))
-        } else {
-            let file = std::fs::File::create(spec)?;
-            Ok(Box::new(file))
-        }
-    }
+        std::fs::File::create(spec)?
+    };
+
+    Ok(std::io::BufWriter::with_capacity(BUFFER_SIZE, writer))
 }
 
 fn type_name_of<T>(_: &T) -> &'static str {
@@ -649,11 +643,10 @@ fn main() {
             #[cfg(feature = "hpc")]
             let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
 
-            let processor =
-                PairProcessor::<_, _, _, OUTPUT_TYPE_RAW, OUTPUT_SEPARATOR_NONE, false>::new_fast(
-                    std::io::BufReader::new(RandReadAdaptor::new(rng)),
-                    std::io::sink(),
-                );
+            let processor = PairProcessor::<_, _, _, OUTPUT_TYPE_RAW>::new_fast(
+                std::io::BufReader::new(RandReadAdaptor::new(rng)),
+                std::io::sink(),
+            );
             thread::scope(|s| unsafe {
                 let j1 = thread::Builder::new()
                     .stack_size(8 << 20)
@@ -661,6 +654,7 @@ fn main() {
                     .spawn_scoped(s, || {
                         processor.loop_thread::<true, true>(
                             kernel0,
+                            b"",
                             #[cfg(feature = "hpc")]
                             arg_core0,
                         )
@@ -673,6 +667,7 @@ fn main() {
                     .spawn_scoped(s, || {
                         processor.loop_thread::<true, true>(
                             kernel1,
+                            b"",
                             #[cfg(feature = "hpc")]
                             arg_core1,
                         )
@@ -763,13 +758,38 @@ fn main() {
         Some(("pipe", sub_matches)) => {
             let arg_input = sub_matches.get_one::<String>("input").unwrap().clone();
             let arg_output = sub_matches.get_one::<String>("output").unwrap().clone();
-            let arg_output_buffer = sub_matches.get_one::<u32>("output_buffer").cloned();
             #[cfg(feature = "hpc")]
             let arg_core0 = sub_matches.get_one::<usize>("core0").cloned();
             #[cfg(feature = "hpc")]
             let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
             let arg_stats = sub_matches.get_flag("stats");
-            let arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
+            let mut arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
+
+            let osep = arg_output_format.split('+').last().and_then(|s| match s {
+                #[cfg(all(target_family = "unix", not(target_os = "macos")))]
+                "nl" | "NL" => Some(b"\n".as_slice()),
+                #[cfg(target_os = "macos")]
+                "nl" | "NL" => Some(b"\r".as_slice()),
+                #[cfg(all(not(target_family = "unix"), not(target_os = "macos")))]
+                "nl" | "NL" => Some(b"\r\n".as_slice()),
+                "lf" | "LF" => Some(b"\n".as_slice()),
+                "crlf" | "CRLF" => Some(b"\r\n".as_slice()),
+                "cr" | "CR" => Some(b"\r".as_slice()),
+                "nul" | "NUL" | "null" | "NULL" => Some(b"\0".as_slice()),
+                _ => None,
+            });
+
+            if osep.is_some() {
+                let mut cuts = arg_output_format
+                    .split('+')
+                    .rev()
+                    .skip(1)
+                    .collect::<Vec<_>>();
+                cuts.reverse();
+                arg_output_format = cuts.join("+");
+            }
+
+            let osep = osep.unwrap_or(b"");
 
             let (kernel0, kernel1) = {
                 (
@@ -779,27 +799,26 @@ fn main() {
             };
 
             let reader = open_reader(&arg_input).unwrap();
-            let writer = open_writer(&arg_output, arg_output_buffer).unwrap();
+            let writer = open_writer(&arg_output).unwrap();
 
             macro_rules! match_format {
-                ($($spec:pat => ($otype:ident, $osep:ident, $oupper:literal)),* $(,)?) => {
+                ($($spec:pat => $otype:ident),* $(,)?) => {
                     match arg_output_format.as_str() {
                         $($spec => {
-
-                            let processor = PairProcessor::<_, _, _, $otype, $osep, $oupper>::new_fast(reader, writer);
+                            let processor = PairProcessor::<_, _, _, $otype>::new_fast(reader, writer);
                             thread::scope(|s| {
                                 let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
                                     if arg_stats {
-                                        unsafe { processor.loop_thread::<true, true>(kernel0, #[cfg(feature = "hpc")] arg_core0) }
+                                        unsafe { processor.loop_thread::<true, true>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
                                     } else {
-                                        unsafe { processor.loop_thread::<true, false>(kernel0, #[cfg(feature = "hpc")] arg_core0) }
+                                        unsafe { processor.loop_thread::<true, false>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
                                     }
                                 }).expect("Failed to spawn worker thread 0");
                                 let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
                                     if arg_stats {
-                                        unsafe { processor.loop_thread::<false, true>(kernel1, #[cfg(feature = "hpc")] arg_core1) }
+                                        unsafe { processor.loop_thread::<false, true>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
                                     } else {
-                                        unsafe { processor.loop_thread::<false, false>(kernel1, #[cfg(feature = "hpc")] arg_core1) }
+                                        unsafe { processor.loop_thread::<false, false>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
                                     }
                                 }).expect("Failed to spawn worker thread 1");
 
@@ -871,40 +890,16 @@ fn main() {
                         _ => {
                             eprintln!(r#"invalid output format: '{}',
                             
-                            please try one of the following:
+                            please try one of the following, you can append (+nl, +lf, +crlf, +cr, +nul) to the format to add a separator:
 
                             'raw', 'RAW': raw binary output
                             'q+raw', 'q+RAW': raw binary output with quality score prefix in float format little endian
 
-                            'hex', 'HEX': hex output
+                            'hex', 'HEX': hex output (case-sensitive)
                             'q+hex', 'q+HEX': hex output with ASCII decimal quality score prefix separated by a colon
 
                             'bin', 'BIN': binary output
                             'q+bin', 'q+BIN': binary output with ASCII decimal quality score prefix separated by a colon
-
-                            'hex+lf', 'HEX+LF': hex output with line feed separator
-                            'hex+crlf', 'HEX+CRLF': hex output with carriage return line feed separator
-                            'hex+cr', 'HEX+CR': hex output with carriage return separator
-                            
-                            'bin+lf', 'BIN+LF': binary output with line feed separator
-                            'bin+crlf', 'BIN+CRLF': binary output with carriage return line feed separator
-                            'bin+cr', 'BIN+CR': binary output with carriage return separator    
-                            
-                            'q+hex', 'q+HEX': hex output with ASCII decimal quality score prefix separated by a colon
-                            'q+bin', 'q+BIN': binary output with ASCII decimal quality score prefix separated by a colon
-
-                            'hex+lf', 'HEX+LF': hex output with line feed separator
-                            'hex+crlf', 'HEX+CRLF': hex output with carriage return line feed separator
-                            'hex+cr', 'HEX+CR': hex output with carriage return separator
-                            
-                            'q+hex+lf', 'q+HEX+LF': hex output with ASCII decimal quality score prefix separated by a colon and line feed separator     
-                            'q+hex+crlf', 'q+HEX+CRLF': hex output with ASCII decimal quality score prefix separated by a colon and carriage return line feed separator
-                            'q+hex+cr', 'q+HEX+CR': hex output with ASCII decimal quality score prefix separated by a colon and carriage return separator
-
-                            'q+bin+lf', 'q+BIN+LF': binary output with ASCII decimal quality score prefix separated by a colon and line feed separator
-                            'q+bin+crlf', 'q+BIN+CRLF': binary output with ASCII decimal quality score prefix separated by a colon and carriage return line feed separator
-                            'q+bin+cr', 'q+BIN+CR': binary output with ASCII decimal quality score prefix separated by a colon and carriage return separator
-
                             "#, arg_output_format);
                             std::process::exit(255);
                         }
@@ -913,43 +908,171 @@ fn main() {
             }
 
             match_format!(
-                "raw" | "Raw" | "RAW" => (OUTPUT_TYPE_RAW, OUTPUT_SEPARATOR_NONE, false),
-                "q+raw" | "q+Raw" | "q+RAW" => (OUTPUT_TYPE_RAW_PREFIX_QUALITY, OUTPUT_SEPARATOR_NONE, false),
+                "raw" | "Raw" | "RAW" => OUTPUT_TYPE_RAW,
+                "q+raw" | "q+Raw" | "q+RAW" => OUTPUT_TYPE_RAW_PREFIX_QUALITY,
 
-                "hex" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_NONE, false),
-                "HEX" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_NONE, true),
-                "bin" | "BIN" => (OUTPUT_TYPE_ASCII_BINARY, OUTPUT_SEPARATOR_NONE, false),
+                "hex" => OUTPUT_TYPE_ASCII_HEX,
+                "HEX" => OUTPUT_TYPE_ASCII_HEX_UPPER,
+                "bin" | "BIN" => OUTPUT_TYPE_ASCII_BINARY,
 
-                "hex+lf" | "hex+LF" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_LF, false),
-                "HEX+lf" | "HEX+LF" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_LF, true),
-                "hex+crlf" | "hex+CRLF" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_CRLF, false),
-                "HEX+crlf" | "HEX+CRLF" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_CRLF, true),
-                "hex+cr" | "hex+CR" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_CR, false),
-                "HEX+cr" | "HEX+CR" => (OUTPUT_TYPE_ASCII_HEX, OUTPUT_SEPARATOR_CR, true),
+                "q+hex" => OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY,
+                "q+HEX" => OUTPUT_TYPE_ASCII_HEX_UPPER_PREFIX_QUALITY,
 
-                "bin+lf" | "BIN+LF" => (OUTPUT_TYPE_ASCII_BINARY, OUTPUT_SEPARATOR_LF, false),
-                "bin+crlf" | "BIN+CRLF" => (OUTPUT_TYPE_ASCII_BINARY, OUTPUT_SEPARATOR_CRLF, false),
-                "bin+cr" | "BIN+CR" => (OUTPUT_TYPE_ASCII_BINARY, OUTPUT_SEPARATOR_CR, false),
-
-                "q+hex" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_NONE, false),
-                "q+HEX" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_NONE, true),
-                "q+hex+lf" | "q+hex+LF" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_LF, false),
-                "q+HEX+lf" | "q+HEX+LF" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_LF, true),
-                "q+hex+crlf" | "q+hex+CRLF" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_CRLF, false),
-                "q+HEX+crlf" | "q+HEX+CRLF" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_CRLF, true),
-                "q+hex+cr" | "q+hex+CR" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_CR, false),
-                "q+HEX+cr" | "q+HEX+CR" => (OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY, OUTPUT_SEPARATOR_CR, true),
-
-                "q+bin" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_NONE, false),
-                "q+BIN" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_NONE, true),
-                "q+bin+lf" | "q+bin+LF" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_LF, false),
-                "q+BIN+lf" | "q+BIN+LF" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_LF, true),
-                "q+bin+crlf" | "q+bin+CRLF" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_CRLF, false),
-                "q+BIN+crlf" | "q+BIN+CRLF" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_CRLF, true),
-                "q+bin+cr" | "q+bin+CR" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_CR, false),
-                "q+BIN+cr" | "q+BIN+CR" => (OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY, OUTPUT_SEPARATOR_CR, true),
-
+                "q+bin" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
+                "q+BIN" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
             );
+        }
+        #[cfg(feature = "cli-bench")]
+        Some(("bench", sub_matches)) => {
+            use std::hash::BuildHasher;
+            let num = RandomState::new().hash_one(0);
+            let rng = rand::rngs::SmallRng::seed_from_u64(num);
+            // replicate the indirection on the real version
+            let reader = std::io::BufReader::new(RandReadAdaptor::new(rng));
+            let rng2 = rand::rngs::SmallRng::seed_from_u64(num);
+            let reader2 = std::io::BufReader::new(RandReadAdaptor::new(rng2));
+            let rng3 = rand::rngs::SmallRng::seed_from_u64(num);
+            let reader3 = std::io::BufReader::new(RandReadAdaptor::new(rng3));
+            let mut crit = criterion::Criterion::default().without_plots();
+            #[cfg_attr(not(feature = "hpc"), expect(unused))]
+            let core0 = sub_matches.get_one::<usize>("core0").map(|s| *s);
+            #[cfg_attr(not(feature = "hpc"), expect(unused))]
+            let core1 = sub_matches.get_one::<usize>("core1").map(|s| *s);
+
+            let (mut pipe_rx, pipe_tx) = std::io::pipe().expect("Failed to create loopback pipe");
+            let (mut pipe_rx_hex, pipe_tx_hex) =
+                std::io::pipe().expect("Failed to create loopback pipe");
+            let (mut pipe_rx_bin, pipe_tx_bin) =
+                std::io::pipe().expect("Failed to create loopback pipe");
+
+            let processor = PairProcessor::<_, _, _, OUTPUT_TYPE_RAW>::new_fast(reader, pipe_tx);
+
+            let processor_hex =
+                PairProcessor::<_, _, _, OUTPUT_TYPE_ASCII_HEX>::new_fast(reader2, pipe_tx_hex);
+
+            let processor_bin =
+                PairProcessor::<_, _, _, OUTPUT_TYPE_ASCII_BINARY>::new_fast(reader3, pipe_tx_bin);
+
+            thread::scope(|s| {
+                let kernel0 = yume_pdq::kernel::smart_kernel();
+                let kernel1 = yume_pdq::kernel::smart_kernel();
+                let kernel2 = yume_pdq::kernel::smart_kernel();
+                let kernel3 = yume_pdq::kernel::smart_kernel();
+                let kernel4 = yume_pdq::kernel::smart_kernel();
+                let kernel5 = yume_pdq::kernel::smart_kernel();
+                s.spawn(|| unsafe {
+                    processor
+                        .loop_thread::<true, false>(
+                            kernel0,
+                            b"",
+                            #[cfg(feature = "hpc")]
+                            core0,
+                        )
+                        .expect("Failed to spawn worker thread 0");
+                });
+
+                s.spawn(|| unsafe {
+                    processor
+                        .loop_thread::<false, false>(
+                            kernel1,
+                            b"",
+                            #[cfg(feature = "hpc")]
+                            core1,
+                        )
+                        .expect("Failed to spawn worker thread 1");
+                });
+
+                s.spawn(|| unsafe {
+                    processor_hex
+                        .loop_thread::<true, false>(
+                            kernel2,
+                            b"",
+                            #[cfg(feature = "hpc")]
+                            core0,
+                        )
+                        .expect("Failed to spawn worker thread 2");
+                });
+
+                s.spawn(|| unsafe {
+                    processor_hex
+                        .loop_thread::<false, false>(
+                            kernel3,
+                            b"",
+                            #[cfg(feature = "hpc")]
+                            core1,
+                        )
+                        .expect("Failed to spawn worker thread 3");
+                });
+
+                s.spawn(|| unsafe {
+                    processor_bin
+                        .loop_thread::<true, false>(
+                            kernel4,
+                            b"",
+                            #[cfg(feature = "hpc")]
+                            core0,
+                        )
+                        .expect("Failed to spawn worker thread 4");
+                });
+
+                s.spawn(|| unsafe {
+                    processor_bin
+                        .loop_thread::<false, false>(
+                            kernel5,
+                            b"",
+                            #[cfg(feature = "hpc")]
+                            core1,
+                        )
+                        .expect("Failed to spawn worker thread 5");
+                });
+
+                let mut group = crit.benchmark_group("pdq_pingpong");
+                group.throughput(criterion::Throughput::Bytes(512 * 512));
+                group.measurement_time(std::time::Duration::from_secs(15));
+                // make sure we drained everything already processed
+                group.warm_up_time(std::time::Duration::from_secs(10));
+                group.bench_function("hash", |b| {
+                    b.iter(|| {
+                        let mut hash: [u8; 256 / 8] = [0; 256 / 8];
+                        pipe_rx.read_exact(&mut hash).unwrap();
+                        hash
+                    });
+                });
+
+                drop(group);
+
+                let mut group = crit.benchmark_group("pdq_pingpong_hex");
+                group.throughput(criterion::Throughput::Bytes(512 * 512));
+                group.measurement_time(std::time::Duration::from_secs(15));
+                // make sure we drained everything already processed
+                group.warm_up_time(std::time::Duration::from_secs(10));
+                group.bench_function("hash", |b| {
+                    b.iter(|| {
+                        let mut hash: [u8; 256 / 8 * 2] = [0; 256 / 8 * 2];
+                        pipe_rx_hex.read_exact(&mut hash).unwrap();
+                        hash
+                    });
+                });
+
+                drop(group);
+
+                let mut group = crit.benchmark_group("pdq_pingpong_bin");
+                group.throughput(criterion::Throughput::Bytes(512 * 512));
+                group.measurement_time(std::time::Duration::from_secs(15));
+                // make sure we drained everything already processed
+                group.warm_up_time(std::time::Duration::from_secs(10));
+                group.bench_function("hash", |b| {
+                    b.iter(|| {
+                        let mut hash: [u8; 256 / 8 * 8] = [0; 256 / 8 * 8];
+                        pipe_rx_bin.read_exact(&mut hash).unwrap();
+                        hash
+                    });
+                });
+
+                drop(group);
+
+                std::process::exit(0);
+            });
         }
         _ => {
             eprintln!("Invalid subcommand, try --help for usage");
