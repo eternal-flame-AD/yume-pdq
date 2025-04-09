@@ -177,66 +177,47 @@ impl Avx2F32Kernel {
                 for j_by_8 in (0..128).step_by(8) {
                     let mut sumk = [_mm256_setzero_ps(); 2];
 
-                    let mut k2 = 0;
                     let mut sum_target = true;
 
-                    // it is very important to skip the last iteration as tmp has unknown padding
-                    macro_rules! do_loop {
-                        (1, $dct_row:expr, $dct_idx:expr) => {
-                            let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
-                            // Broadcast the i-th column of D^t, multiply with the j-th row of the image
-                            let dct =
-                                _mm256_permutevar8x32_ps($dct_row, _mm256_set1_epi32($dct_idx));
-                            // add the result to the sum
-                            sumk[sum_target as usize] = _mm256_fmadd_ps(buf_row, dct, sumk[sum_target as usize]);
-                        };
-                        (2, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(1, $dct_row, $dct_idx);
-                            sum_target = !sum_target;
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(1, $dct_row, $dct_idx);
-                        };
-                        (4, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(2, $dct_row, $dct_idx);
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(2, $dct_row, $dct_idx);
-                        };
-                        (8) => {
-                            // load one whole row of DCT matrix (i.e. one column of D^t)
-                            let dct_row = _mm256_loadu_ps(
-                                dct_matrix_rmajor.as_ptr().add(k * super::DctMatrixNumCols::USIZE + k2),
-                            );
-                            let mut dct_idx = 0;
-                            do_loop!(4, dct_row, dct_idx);
-                            dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(4, dct_row, dct_idx);
-                        };
-                        (16) => {
-                            do_loop!(8);
-                            k2 += 1;
-                            do_loop!(8);
-                        };
-                        (32) => {
-                            do_loop!(16);
-                            k2 += 1;
-                            do_loop!(16);
-                        };
-                        (64) => {
-                            do_loop!(32);
-                            k2 += 1;
-                            do_loop!(32);
-                        };
-                        (128) => {
-                            do_loop!(64);
-                            k2 += 1;
-                            do_loop!(64);
-                        };
-                    }
+                    // ~~it is very important to skip the last iteration as tmp has unknown padding~~
+                    // now we clear NaN instead of explicitly skipping the last iteration
+                    // which handles edge case images return NaN quality for some situation as well for user experience
 
-                    do_loop!(128);
+                    for k2_base in (0..128).step_by(8) {
+                        let mut k2 = k2_base;
+
+                        macro_rules! do_loop {
+                            (1) => {
+                                let buf_row = _mm256_loadu_ps(&buffer[k2][j_by_8]);
+                                // Broadcast the i-th column of D^t, multiply with the j-th row of the image
+                                let dct = _mm256_set1_ps(
+                                    *dct_matrix_rmajor
+                                        .as_ptr()
+                                        .add(k * super::DctMatrixNumCols::USIZE + k2),
+                                );
+                                // add the result to the sum
+                                sumk[sum_target as usize] = _mm256_fmadd_ps(buf_row, dct, sumk[sum_target as usize]);
+                            };
+                            (2) => {
+                                do_loop!(1);
+                                sum_target = !sum_target;
+                                k2 += 1;
+                                do_loop!(1);
+                            };
+                            (4) => {
+                                do_loop!(2);
+                                k2 += 1;
+                                do_loop!(2);
+                            };
+                            (8) => {
+                                do_loop!(4);
+                                k2 += 1;
+                                do_loop!(4);
+                            };
+                        }
+
+                        do_loop!(8);
+                    }
 
                     let sumk0 = sumk[0];
                     let sumk1 = sumk[1];
@@ -486,29 +467,34 @@ impl Kernel for Avx2F32Kernel {
             }
             let mut max = horizontal!(max(max_v));
             let mut min = horizontal!(min(min_v));
-            let half_point = (16 * 16 / 2) as f32;
+            let half_point = 16 * 16 / 2;
 
             let mut guess = (min + max) * 0.5;
-            let mut num_over = 0.0f32; // how many elements are beyond the search max?
-            let mut num_under = 0.0f32; // how many elements are below the search min?
-            // if we consider min as 0, max as 255, the range of the guessing windows for each iteration at the beginning (when writing the mask):
-            // 0 -> (0, 255)
-            // 1 -> (0, 127.5)
-            // 2 -> (0, 63.75)
-            // 3 -> (0, 31.875)
-            // 4 -> (0, 15.9375)
-            // 5 -> (0, 7.96875)
-            // 6 -> (0, 3.984375)
-            // 7 -> (0, 1.9921875) at worst off by 1, and with a more educated guess it should be almost impossible to happen
-            // 8 -> (0, 0.99609375) perfect thresholding
-            for _iter in 0..9 {
+            let mut num_over = 0; // how many elements are beyond the search max?
+            let mut num_under = 0; // how many elements are below the search min?
+
+            const MAX_ITER: usize = 32;
+            #[cfg_attr(not(debug_assertions), allow(unused))]
+            let mut converged = false;
+
+            // Binary search with SIMD with inter-searchspace statistics for reducing oscillations
+            //
+            // The reason we need to keep this many inter-searchspace comparisons and averages is the issue that
+            // classic binary search expects a "perfect" answer, and it will require exhaustively narrowing down to an exact
+            // floating point number and unable to prove that the current guess already is the perfect thresholding.
+            //
+            // This provides a more informed new guess that always set the next guess to be the mean of the new search space
+            // and thus either guarantee elimination of at least one element,
+            // or if the input is extreme, a new search space that is extremely small (floating point error territory)
+            for _iter in 0..MAX_ITER {
+                debug_assert!(guess.is_finite(), "guess is NaN");
                 let guess_v = _mm256_set1_ps(guess);
-                let mut resid_gt_count_v = _mm256_setzero_ps();
-                let mut resid_lt_count_v = _mm256_setzero_ps();
                 let mut resid_sum_lt_v = _mm256_setzero_ps();
                 let mut resid_sum_gt_v = _mm256_setzero_ps();
                 let min_v = _mm256_set1_ps(min);
                 let max_v = _mm256_set1_ps(max);
+                let mut gt_count = 0;
+                let mut lt_count = 0;
 
                 let mut row_ptr = input.as_ptr().cast::<f32>();
                 let mut output_ptr = output.flatten().as_mut_ptr().add(32 - 1);
@@ -522,14 +508,8 @@ impl Kernel for Avx2F32Kernel {
                         let cmp_min_gt = _mm256_cmp_ps(row, min_v, _CMP_GE_OQ);
                         let mask_resid_gt = _mm256_and_ps(cmp_gt, cmp_max_lt);
                         let mask_resid_lt = _mm256_and_ps(cmp_lt, cmp_min_gt);
-                        resid_gt_count_v = _mm256_add_ps(
-                            resid_gt_count_v,
-                            _mm256_and_ps(mask_resid_gt, _mm256_set1_ps(1.0)),
-                        );
-                        resid_lt_count_v = _mm256_add_ps(
-                            resid_lt_count_v,
-                            _mm256_and_ps(mask_resid_lt, _mm256_set1_ps(1.0)),
-                        );
+                        gt_count += _mm256_movemask_ps(mask_resid_gt).count_ones();
+                        lt_count += _mm256_movemask_ps(mask_resid_lt).count_ones();
 
                         resid_sum_gt_v =
                             _mm256_add_ps(resid_sum_gt_v, _mm256_and_ps(mask_resid_gt, row));
@@ -586,21 +566,29 @@ impl Kernel for Avx2F32Kernel {
                 );
                 */
 
-                let gt_count = horizontal!(sum(resid_gt_count_v));
-                let lt_count = horizontal!(sum(resid_lt_count_v));
-
                 if gt_count + num_over > half_point {
                     num_under += lt_count;
                     min = guess;
-                    guess = horizontal!(sum(resid_sum_gt_v)) / gt_count;
+                    debug_assert!(
+                        gt_count != 0,
+                        "gt_count is 0 somehow when gt_count + num_over > half_point"
+                    );
+                    guess = horizontal!(sum(resid_sum_gt_v)) / gt_count as f32;
                 } else if lt_count + num_under > half_point {
                     num_over += gt_count;
                     max = guess;
-                    guess = horizontal!(sum(resid_sum_lt_v)) / lt_count;
+                    debug_assert!(
+                        lt_count != 0,
+                        "lt_count is 0 somehow when lt_count + num_under > half_point"
+                    );
+                    guess = horizontal!(sum(resid_sum_lt_v)) / lt_count as f32;
                 } else {
+                    converged = true;
                     break;
                 }
             }
+            debug_assert!(converged, "quantization did not converge");
+
             *threshold = guess;
         } // unsafe
         // crate::testing::dump_image("step_by_step/quantize/avx2/output.ppm", output);
@@ -676,19 +664,33 @@ impl Kernel for Avx512F32Kernel {
             }
             let mut max = _mm512_reduce_max_ps(max_v);
             let mut min = _mm512_reduce_min_ps(min_v);
-            let half_point = (16 * 16 / 2) as f32;
+            let half_point = 16 * 16 / 2;
 
             let mut guess = (min + max) * 0.5;
-            let mut num_over = 0.0f32; // how many elements are beyond the search max?
-            let mut num_under = 0.0f32; // how many elements are below the search min?
-            for _ in 0..8 {
+            let mut num_over = 0; // how many elements are beyond the search max?
+            let mut num_under = 0; // how many elements are below the search min?
+
+            // Binary search with SIMD with inter-searchspace statistics for reducing oscillations
+            //
+            // The reason we need to keep this many inter-searchspace comparisons and averages is the issue that
+            // classic binary search expects a "perfect" answer, and it will require exhaustively narrowing down to an exact
+            // floating point number and unable to prove that the current guess already is the perfect thresholding.
+            //
+            // This provides a more informed new guess that always set the next guess to be the mean of the new search space
+            // and thus either guarantee elimination of at least one element,
+            // or if the input is extreme, a new search space that is extremely small (floating point error territory)
+            const MAX_ITER: usize = 32;
+            #[cfg_attr(not(debug_assertions), allow(unused))]
+            let mut converged = false;
+            for _iter in 0..MAX_ITER {
+                assert!(guess.is_finite(), "guess is NaN");
                 let guess_v = _mm512_set1_ps(guess);
-                let mut resid_gt_count_v = _mm512_setzero_ps();
-                let mut resid_lt_count_v = _mm512_setzero_ps();
                 let mut resid_sum_lt_v = _mm512_setzero_ps();
                 let mut resid_sum_gt_v = _mm512_setzero_ps();
                 let min_v = _mm512_set1_ps(min);
                 let max_v = _mm512_set1_ps(max);
+                let mut gt_count = 0;
+                let mut lt_count = 0;
 
                 let mut row_ptr = input.as_ptr().cast::<f32>();
                 let mut output_ptr = output.flatten().as_mut_ptr().add(32 - 1);
@@ -702,18 +704,8 @@ impl Kernel for Avx512F32Kernel {
                         let cmp_lt = _mm512_cmp_ps_mask(row, guess_v, _CMP_LT_OQ);
                         let cmp_max_lt = _mm512_cmp_ps_mask(row, max_v, _CMP_LE_OQ);
                         let cmp_min_gt = _mm512_cmp_ps_mask(row, min_v, _CMP_GE_OQ);
-                        resid_gt_count_v = _mm512_mask_add_ps(
-                            resid_gt_count_v,
-                            cmp_gt & cmp_max_lt,
-                            resid_gt_count_v,
-                            _mm512_set1_ps(1.0),
-                        );
-                        resid_lt_count_v = _mm512_mask_add_ps(
-                            resid_lt_count_v,
-                            cmp_lt & cmp_min_gt,
-                            resid_lt_count_v,
-                            _mm512_set1_ps(1.0),
-                        );
+                        gt_count += (cmp_gt & cmp_max_lt).count_ones();
+                        lt_count += (cmp_lt & cmp_min_gt).count_ones();
 
                         resid_sum_gt_v = _mm512_mask_add_ps(
                             resid_sum_gt_v,
@@ -756,21 +748,29 @@ impl Kernel for Avx512F32Kernel {
 
                 do_loop!(16);
 
-                let gt_count = _mm512_reduce_add_ps(resid_gt_count_v);
-                let lt_count = _mm512_reduce_add_ps(resid_lt_count_v);
-
                 if gt_count + num_over > half_point {
                     num_under += lt_count;
                     min = guess;
-                    guess = _mm512_reduce_add_ps(resid_sum_gt_v) / gt_count;
+                    debug_assert!(
+                        gt_count != 0,
+                        "gt_count is 0 somehow when gt_count + num_over > half_point"
+                    );
+                    guess = _mm512_reduce_add_ps(resid_sum_gt_v) / gt_count as f32;
                 } else if lt_count + num_under > half_point {
                     num_over += gt_count;
                     max = guess;
-                    guess = _mm512_reduce_add_ps(resid_sum_lt_v) / lt_count;
+                    debug_assert!(
+                        lt_count != 0,
+                        "lt_count is 0 somehow when lt_count + num_under > half_point"
+                    );
+                    guess = _mm512_reduce_add_ps(resid_sum_lt_v) / lt_count as f32;
                 } else {
+                    converged = true;
                     break;
                 }
             }
+            debug_assert!(converged, "quantization did not converge");
+
             *threshold = guess;
         } // unsafe
     }
@@ -841,65 +841,47 @@ impl Kernel for Avx512F32Kernel {
                 for j_by_16 in (0..128).step_by(16) {
                     let mut sumks = [_mm512_setzero_ps(); 2];
 
-                    let mut k2 = 0;
                     let mut sum_target = true;
-                    macro_rules! do_loop {
-                        (1, $dct_row:expr, $dct_idx:expr) => {
-                            let buf_row = _mm512_loadu_ps(&buffer[k2][j_by_16]);
-                            let dct = _mm512_permutexvar_ps(_mm512_set1_epi32($dct_idx), $dct_row);
-                            sumks[sum_target as usize] =
-                                _mm512_fmadd_ps(buf_row, dct, sumks[sum_target as usize]);
-                        };
-                        (2, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(1, $dct_row, $dct_idx);
-                            sum_target = !sum_target;
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(1, $dct_row, $dct_idx);
-                        };
-                        (4, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(2, $dct_row, $dct_idx);
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(2, $dct_row, $dct_idx);
-                        };
-                        (8, $dct_row:expr, $dct_idx:expr) => {
-                            do_loop!(4, $dct_row, $dct_idx);
-                            $dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(4, $dct_row, $dct_idx);
-                        };
-                        (16) => {
-                            let dct_row = _mm512_loadu_ps(
-                                DCT_MATRIX_RMAJOR
-                                    .as_ptr()
-                                    .add(k * super::DctMatrixNumCols::USIZE + k2),
-                            );
-                            let mut dct_idx = 0;
-                            do_loop!(8, dct_row, dct_idx);
-                            dct_idx += 1;
-                            k2 += 1;
-                            do_loop!(8, dct_row, dct_idx);
-                        };
-                        (32) => {
-                            do_loop!(16);
-                            k2 += 1;
-                            do_loop!(16);
-                        };
-                        (64) => {
-                            do_loop!(32);
-                            k2 += 1;
-                            do_loop!(32);
-                        };
-                        (128) => {
-                            do_loop!(64);
-                            k2 += 1;
-                            do_loop!(64);
-                        };
+
+                    for k2_base in (0..128).step_by(16) {
+                        let mut k2 = k2_base;
+
+                        macro_rules! do_loop {
+                            (1) => {
+                                let buf_row = _mm512_loadu_ps(&buffer[k2][j_by_16]);
+                                let dct = _mm512_set1_ps(
+                                    *DCT_MATRIX_RMAJOR
+                                        .as_ptr()
+                                        .add(k * super::DctMatrixNumCols::USIZE + k2),
+                                );
+                                sumks[sum_target as usize] =
+                                    _mm512_fmadd_ps(buf_row, dct, sumks[sum_target as usize]);
+                            };
+                            (2) => {
+                                do_loop!(1);
+                                sum_target = !sum_target;
+                                k2 += 1;
+                                do_loop!(1);
+                            };
+                            (4) => {
+                                do_loop!(2);
+                                k2 += 1;
+                                do_loop!(2);
+                            };
+                            (8) => {
+                                do_loop!(4);
+                                k2 += 1;
+                                do_loop!(4);
+                            };
+                            (16) => {
+                                do_loop!(8);
+                                k2 += 1;
+                                do_loop!(8);
+                            };
+                        }
+
+                        do_loop!(16);
                     }
-
-                    do_loop!(128);
-
                     let sumk0 = sumks[0];
                     let sumk1 = sumks[1];
 

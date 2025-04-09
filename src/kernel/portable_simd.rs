@@ -430,20 +430,23 @@ where
 
         let mut min = min_v.reduce_min();
         let mut max = max_v.reduce_max();
-        let half_point = (16 * 16 / 2) as f32;
+        let half_point = 16 * 16 / 2;
 
         let mut guess = (min + max) * 0.5;
-        let mut num_over = 0.0f32;
-        let mut num_under = 0.0f32;
+        let mut num_over = 0; // how many elements are beyond the search max?
+        let mut num_under = 0; // how many elements are below the search min?
 
-        let ones = SimdPS::<16>::splat(1.0);
         let zeros = SimdPS::<16>::splat(0.0);
 
-        // Binary search with SIMD
-        for _iter in 0..9 {
+        // Binary search with SIMD with inter-searchspace statistics for reducing oscillations
+        const MAX_ITER: usize = 32;
+        #[cfg_attr(not(debug_assertions), allow(unused))]
+        let mut converged = false;
+        for _iter in 0..MAX_ITER {
+            assert!(guess.is_finite(), "guess is NaN");
             let guess_v = SimdPS::<16>::splat(guess);
-            let mut resid_gt_count_v = SimdPS::<16>::splat(0.0);
-            let mut resid_lt_count_v = SimdPS::<16>::splat(0.0);
+            let mut gt_count = 0;
+            let mut lt_count = 0;
             let mut resid_sum_gt_v = SimdPS::<16>::splat(0.0);
             let mut resid_sum_lt_v = SimdPS::<16>::splat(0.0);
             let min_v = SimdPS::<16>::splat(min);
@@ -460,12 +463,18 @@ where
                 let cmp_lt = row.simd_lt(guess_v);
                 let cmp_max_lt = row.simd_le(max_v);
                 let cmp_min_gt = row.simd_ge(min_v);
+
+                let cmp_lt_u8 = cmp_lt.to_bitmask();
+                let cmp_gt_u8 = cmp_gt.to_bitmask();
+                let cmp_max_lt_u8 = cmp_max_lt.to_bitmask();
+                let cmp_min_gt_u8 = cmp_min_gt.to_bitmask();
+
                 let mask_resid_gt = cmp_gt.bitand(cmp_max_lt);
                 let mask_resid_lt = cmp_lt.bitand(cmp_min_gt);
 
                 // Count elements and sum values
-                resid_gt_count_v += mask_resid_gt.select(ones, zeros);
-                resid_lt_count_v += mask_resid_lt.select(ones, zeros);
+                gt_count += (cmp_gt_u8 & cmp_max_lt_u8).count_ones();
+                lt_count += (cmp_lt_u8 & cmp_min_gt_u8).count_ones();
 
                 resid_sum_gt_v += mask_resid_gt.select(row, zeros);
                 resid_sum_lt_v += mask_resid_lt.select(row, zeros);
@@ -487,21 +496,29 @@ where
             );
 
             */
-            let gt_count = resid_gt_count_v.reduce_sum();
-            let lt_count = resid_lt_count_v.reduce_sum();
 
             if gt_count + num_over > half_point {
                 num_under += lt_count;
                 min = guess;
-                guess = resid_sum_gt_v.reduce_sum() / gt_count;
+                debug_assert!(
+                    gt_count != 0,
+                    "gt_count is 0 somehow when gt_count + num_over > half_point"
+                );
+                guess = resid_sum_gt_v.reduce_sum() / gt_count as f32;
             } else if lt_count + num_under > half_point {
                 num_over += gt_count;
                 max = guess;
-                guess = resid_sum_lt_v.reduce_sum() / lt_count;
+                debug_assert!(
+                    lt_count != 0,
+                    "lt_count is 0 somehow when lt_count + num_under > half_point"
+                );
+                guess = resid_sum_lt_v.reduce_sum() / lt_count as f32;
             } else {
+                converged = true;
                 break;
             }
         }
+        debug_assert!(converged, "quantization did not converge");
 
         *threshold = guess;
     }
