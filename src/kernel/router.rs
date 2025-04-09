@@ -1,17 +1,17 @@
 /*
  * Copyright (c) 2025 Yumechi <yume@yumechi.jp>
- * 
+ *
  * Created on Wednesday, March 26, 2025
  * Author: Yumechi <yume@yumechi.jp>
- * 
+ *
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,7 +26,8 @@ use core::{
 };
 
 use generic_array::{
-    typenum::{Bit, B0, B1, U3, U4}, ArrayLength, GenericArray
+    ArrayLength, GenericArray,
+    typenum::{B0, B1, Bit, U3, U4},
 };
 
 use super::{
@@ -68,7 +69,12 @@ trait KernelFallthrough<
         false
     }
 
-    fn cvt_rgb8_to_luma8f_opt<const CHECKED: bool, const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+    fn cvt_rgb8_to_luma8f_opt<
+        const CHECKED: bool,
+        const R_COEFF: u32,
+        const G_COEFF: u32,
+        const B_COEFF: u32,
+    >(
         &mut self,
         _input: &GenericArray<GenericArray<u8, U3>, InputDimension>,
         _output: &mut GenericArray<f32, InputDimension>,
@@ -76,7 +82,12 @@ trait KernelFallthrough<
         false
     }
 
-    fn cvt_rgba8_to_luma8f_opt<const CHECKED: bool, const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+    fn cvt_rgba8_to_luma8f_opt<
+        const CHECKED: bool,
+        const R_COEFF: u32,
+        const G_COEFF: u32,
+        const B_COEFF: u32,
+    >(
         &mut self,
         _input: &GenericArray<GenericArray<u8, U4>, InputDimension>,
         _output: &mut GenericArray<f32, InputDimension>,
@@ -155,16 +166,21 @@ where
 {
     fn would_run(&self) -> bool {
         // must be enabled statically and either checking was statically not required or runtime check passed
-        <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && 
+        <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL &&
             (!<<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::MustCheck::BOOL
                 || <P as Kernel>::RequiredHardwareFeature::met_runtime())
     }
 
-    fn cvt_rgb8_to_luma8f_opt<const CHECKED: bool, const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-            &mut self,
-            input: &GenericArray<GenericArray<u8, U3>, <P as Kernel>::InputDimension>,
-            output: &mut GenericArray<f32, <P as Kernel>::InputDimension>,
-        ) -> bool {
+    fn cvt_rgb8_to_luma8f_opt<
+        const CHECKED: bool,
+        const R_COEFF: u32,
+        const G_COEFF: u32,
+        const B_COEFF: u32,
+    >(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, U3>, <P as Kernel>::InputDimension>,
+        output: &mut GenericArray<f32, <P as Kernel>::InputDimension>,
+    ) -> bool {
         if CHECKED && !self.would_run() {
             return false;
         }
@@ -173,11 +189,16 @@ where
         true
     }
 
-    fn cvt_rgba8_to_luma8f_opt<const CHECKED: bool, const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-            &mut self,
-            input: &GenericArray<GenericArray<u8, U4>, <P as Kernel>::InputDimension>,
-            output: &mut GenericArray<f32, <P as Kernel>::InputDimension>,
-        ) -> bool {
+    fn cvt_rgba8_to_luma8f_opt<
+        const CHECKED: bool,
+        const R_COEFF: u32,
+        const G_COEFF: u32,
+        const B_COEFF: u32,
+    >(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, U4>, <P as Kernel>::InputDimension>,
+        output: &mut GenericArray<f32, <P as Kernel>::InputDimension>,
+    ) -> bool {
         if CHECKED && !self.would_run() {
             return false;
         }
@@ -200,7 +221,6 @@ where
         if CHECKED && !self.would_run() {
             return false;
         }
-
 
         self.jarosz_compress(buffer, output);
         true
@@ -240,7 +260,6 @@ where
             return false;
         }
 
-
         self.quantize(input, threshold, output);
         true
     }
@@ -278,7 +297,6 @@ where
         if CHECKED && !self.would_run() {
             return None;
         }
-
 
         Some(self.sum_of_gradients(_input))
     }
@@ -341,10 +359,10 @@ where
         F::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1, MustCheck = B0>,
     {
         // must be enabled statically and either checking was statically not required or runtime check passed
-        let decision = <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && 
+        let decision = <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL &&
             (!<<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::MustCheck::BOOL
                 || <P as Kernel>::RequiredHardwareFeature::met_runtime());
-            
+
         Self {
             materialized_decision: decision,
             preferred,
@@ -526,31 +544,33 @@ where
     }
 
     fn cvt_rgb8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-            &mut self,
-            input: &GenericArray<GenericArray<u8, U3>, Self::InputDimension>,
-            output: &mut GenericArray<f32, Self::InputDimension>,
-        ) {
+        &mut self,
+        input: &GenericArray<GenericArray<u8, U3>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
         if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if self.preferred.cvt_rgb8_to_luma8f_opt::<false, R_COEFF, G_COEFF, B_COEFF>(input, output) {
                 return;
             }
         }
 
-        self.fallback.cvt_rgb8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+        self.fallback
+            .cvt_rgb8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
     }
 
     fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-            &mut self,
-            input: &GenericArray<GenericArray<u8, U4>, Self::InputDimension>,
-            output: &mut GenericArray<f32, Self::InputDimension>,
-        ) {
+        &mut self,
+        input: &GenericArray<GenericArray<u8, U4>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
         if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
             if self.preferred.cvt_rgba8_to_luma8f_opt::<false, R_COEFF, G_COEFF, B_COEFF>(input, output) {
                 return;
             }
         }
 
-        self.fallback.cvt_rgba8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+        self.fallback
+            .cvt_rgba8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
     }
 
     fn jarosz_compress(

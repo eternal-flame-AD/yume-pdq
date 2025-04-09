@@ -1,17 +1,17 @@
 /*
  * Copyright (c) 2025 Yumechi <yume@yumechi.jp>
- * 
+ *
  * Created on Tuesday, March 25, 2025
  * Author: Yumechi <yume@yumechi.jp>
- * 
+ *
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,18 +20,15 @@
  */
 
 use core::{
-    cmp::Ordering, fmt::Display,ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign}
+    cmp::Ordering,
+    fmt::Display,
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
 };
-use num_traits::{float::TotalOrder, Bounded, FromPrimitive, Num, NumCast, One, ToPrimitive};
+use num_traits::{Bounded, FromPrimitive, Num, NumCast, One, ToPrimitive, float::TotalOrder};
 use rug::Assign;
 
 #[cfg(feature = "reference-rug")]
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    PartialOrd,
-)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 /// arbitrary-precision floating point type.
 pub struct ArbFloat<const C: u32 = 96>(rug::Float);
 
@@ -66,7 +63,6 @@ impl<const C: u32> SubAssign<ArbFloat<C>> for ArbFloat<C> {
         self.0 -= rhs.0;
     }
 }
-
 
 impl<const C: u32> NumCast for ArbFloat<C> {
     fn from<T: ToPrimitive>(n: T) -> Option<Self> {
@@ -141,15 +137,28 @@ macro_rules! impl_to_primitive {
 
 impl<const C: u32> FromPrimitive for ArbFloat<C> {
     impl_from_primitive!(
-        from_f32(n: f32), from_f64(n: f64), 
-        from_i8(n: i8), from_i16(n: i16), 
+        from_f32(n: f32), from_f64(n: f64),
+        from_i8(n: i8), from_i16(n: i16),
         from_i32(n: i32), from_i64(n: i64), from_i128(n: i128), from_isize(n: isize), from_u8(n: u8), from_u16(n: u16), from_u32(n: u32), from_u64(n: u64), from_u128(n: u128));
 }
 
 impl<const C: u32> ToPrimitive for ArbFloat<C> {
-    impl_to_primitive!(to_f32 as f32, to_f64 as f64, to_i8 as i8, to_i16 as i16, to_i32 as i32, to_i64 as i64, to_i128 as i128, to_isize as isize, to_u8 as u8, to_u16 as u16, to_u32 as u32, to_u64 as u64, to_u128 as u128);
+    impl_to_primitive!(
+        to_f32 as f32,
+        to_f64 as f64,
+        to_i8 as i8,
+        to_i16 as i16,
+        to_i32 as i32,
+        to_i64 as i64,
+        to_i128 as i128,
+        to_isize as isize,
+        to_u8 as u8,
+        to_u16 as u16,
+        to_u32 as u32,
+        to_u64 as u64,
+        to_u128 as u128
+    );
 }
-
 
 impl<const C: u32> Bounded for ArbFloat<C> {
     fn min_value() -> Self {
