@@ -732,8 +732,13 @@ where
 }
 
 fn open_reader(spec: &str) -> Result<std::io::BufReader<std::fs::File>, std::io::Error> {
+    #[cfg(not(target_os = "windows"))]
     use std::os::fd::{AsFd, FromRawFd, IntoRawFd};
 
+    #[cfg(target_os = "windows")]
+    use std::os::windows::io::{AsHandle, FromRawHandle, IntoRawHandle};
+
+    #[cfg(not(target_os = "windows"))]
     let reader = if spec == "-" {
         let stdin = std::io::stdin();
         let fd = stdin.as_fd().try_clone_to_owned()?;
@@ -742,16 +747,41 @@ fn open_reader(spec: &str) -> Result<std::io::BufReader<std::fs::File>, std::io:
         std::fs::File::open(spec)?
     };
 
+    #[cfg(target_os = "windows")]
+    let reader = if spec == "-" {
+        let stdin = std::io::stdin();
+        let handle = stdin.as_handle().try_clone_to_owned()?;
+        unsafe { std::fs::File::from_raw_handle(handle.into_raw_handle()) }
+    } else {
+        std::fs::File::open(spec)?
+    };
+
     Ok(std::io::BufReader::new(reader))
 }
 
 fn open_writer(spec: &str) -> Result<std::io::BufWriter<std::fs::File>, std::io::Error> {
+    #[cfg(not(target_os = "windows"))]
     use std::os::fd::{AsFd, FromRawFd, IntoRawFd};
+
+    #[cfg(target_os = "windows")]
+    use std::os::windows::io::{AsHandle, FromRawHandle, IntoRawHandle};
+
     const BUFFER_SIZE: usize = 512; // big enough for all outputs, we are flushing anyways
+
+    #[cfg(not(target_os = "windows"))]
     let writer = if spec == "-" {
         let stdout = std::io::stdout();
         let fd = stdout.as_fd().try_clone_to_owned()?;
         unsafe { std::fs::File::from_raw_fd(fd.into_raw_fd()) }
+    } else {
+        std::fs::File::create(spec)?
+    };
+
+    #[cfg(target_os = "windows")]
+    let writer = if spec == "-" {
+        let stdout = std::io::stdout();
+        let handle = stdout.as_handle().try_clone_to_owned()?;
+        unsafe { std::fs::File::from_raw_handle(handle.into_raw_handle()) }
     } else {
         std::fs::File::create(spec)?
     };
