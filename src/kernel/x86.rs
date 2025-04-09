@@ -370,6 +370,78 @@ impl Kernel for Avx2F32Kernel {
         "avx2_f32"
     }
 
+    #[inline]
+    fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
+        unsafe {
+            let mut in_offset = 0;
+            let mut out_offset = 0;
+            let coeff_r = _mm256_set1_ps(f32::from_ne_bytes(R_COEFF.to_ne_bytes()));
+            let coeff_g = _mm256_set1_ps(f32::from_ne_bytes(G_COEFF.to_ne_bytes()));
+            let coeff_b = _mm256_set1_ps(f32::from_ne_bytes(B_COEFF.to_ne_bytes()));
+
+            macro_rules! do_loop {
+                (8) => {
+                    // 8 pixels in 32 bytes, place into exactly 8 output elements (1 lane)
+                    // note this is little endian, so the ordering is pretty unintuitive
+                    let data =
+                        _mm256_loadu_si256(input.as_ptr().cast::<u8>().add(in_offset).cast());
+                    let mask32 = _mm256_set1_epi32(0x000000FF);
+                    let output_r = _mm256_cvtepi32_ps(_mm256_and_si256(data, mask32));
+                    let output_g =
+                        _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<8>(data), mask32));
+                    let output_b =
+                        _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<16>(data), mask32));
+                    let mut output_v = _mm256_mul_ps(output_r, coeff_r);
+                    output_v = _mm256_fmadd_ps(output_g, coeff_g, output_v);
+                    output_v = _mm256_fmadd_ps(output_b, coeff_b, output_v);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(out_offset), output_v);
+                };
+                (16) => {
+                    do_loop!(8);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(8);
+                };
+                (32) => {
+                    do_loop!(16);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(16);
+                };
+                (64) => {
+                    do_loop!(32);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(32);
+                };
+                (128) => {
+                    do_loop!(64);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(64);
+                };
+                (256) => {
+                    do_loop!(128);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(128);
+                };
+                (512) => {
+                    do_loop!(256);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(256);
+                };
+            }
+
+            do_loop!(512);
+        }
+    }
+
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
@@ -634,6 +706,22 @@ impl Kernel for Avx512F32Kernel {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
         scaled.min(1.0)
+    }
+
+    fn cvt_rgb8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, generic_array::typenum::U3>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
+        Avx2F32Kernel.cvt_rgb8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+    }
+
+    fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
+        Avx2F32Kernel.cvt_rgba8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
     }
 
     fn jarosz_compress(
@@ -948,7 +1036,9 @@ impl Kernel for Avx512F32Kernel {
 
 #[cfg(test)]
 mod tests {
-    use crate::alignment::Align32;
+    use generic_array::typenum::U4;
+
+    use crate::{alignment::Align32, kernel::constants};
 
     use super::*;
 
@@ -1038,5 +1128,50 @@ mod tests {
             assert_eq!(horizontal!(sum(case_6)), 36.0);
             assert_eq!(horizontal!(sum(case_7)), 36.0);
         }
+    }
+
+    #[test]
+    fn test_avx2_cvt_rgba8_to_luma8f() {
+        let red = GenericArray::from_array([255, 0, 0, 128]);
+        let green = GenericArray::from_array([0, 255, 0, 128]);
+        let blue = GenericArray::from_array([0, 0, 255, 128]);
+        let white = GenericArray::from_array([255, 255, 255, 128]);
+        let mut row = GenericArray::<GenericArray<u8, U4>, U512>::default();
+        row.iter_mut()
+            .zip([red, green, blue, white].into_iter().cycle())
+            .for_each(|(a, b)| {
+                *a = b;
+            });
+
+        let mut output = GenericArray::<f32, U512>::default();
+
+        let red_expect = constants::RGB8_TO_LUMA8_TABLE_ITU[0] as f32 * 255.0;
+        let green_expect = constants::RGB8_TO_LUMA8_TABLE_ITU[1] as f32 * 255.0;
+        let blue_expect = constants::RGB8_TO_LUMA8_TABLE_ITU[2] as f32 * 255.0;
+        let white_expect = 255.0;
+
+        Avx2F32Kernel.cvt_rgba8_to_luma8f::<
+            { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[0].to_ne_bytes()) },
+            { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[1].to_ne_bytes()) },
+            { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[2].to_ne_bytes()) },
+        >(&row, &mut output);
+
+        output
+            .iter()
+            .enumerate()
+            .zip(
+                [red_expect, green_expect, blue_expect, white_expect]
+                    .into_iter()
+                    .cycle(),
+            )
+            .for_each(|((i, a), b)| {
+                let diff = (a - b).abs();
+                assert!(
+                    diff < 0.0001,
+                    "difference is too large at position {i}: expected {} but got {}",
+                    b,
+                    a
+                );
+            });
     }
 }

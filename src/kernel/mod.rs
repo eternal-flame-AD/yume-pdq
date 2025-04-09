@@ -28,6 +28,7 @@ use core::{
     ops::Add,
 };
 
+use generic_array::typenum::U3;
 #[allow(unused_imports)]
 use generic_array::{
     ArrayLength, GenericArray,
@@ -43,6 +44,9 @@ use sealing::Sealed;
 use type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf, Term};
 
 use crate::alignment::DefaultPaddedArray;
+
+/// Constants for conversions.
+pub mod constants;
 
 /// Kernels based on x86-64 intrinsics.
 #[cfg(target_arch = "x86_64")]
@@ -289,6 +293,44 @@ pub trait Kernel {
         + Default
         + Send
         + Sync;
+
+    /// Convert one row of input from RGB8 to LUMA8 floating point.
+    ///
+    /// A scalar implementation is provided by default.
+    fn cvt_rgb8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, U3>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
+        for (input_pixel, output_pixel) in input.iter().zip(output.iter_mut()) {
+            let r = input_pixel[0] as f32;
+            let g = input_pixel[1] as f32;
+            let b = input_pixel[2] as f32;
+            let luma = f32::from_ne_bytes(R_COEFF.to_ne_bytes()) * r
+                + f32::from_ne_bytes(G_COEFF.to_ne_bytes()) * g
+                + f32::from_ne_bytes(B_COEFF.to_ne_bytes()) * b;
+            *output_pixel = luma;
+        }
+    }
+
+    /// Convert RGBA8 to LUMA8.
+    ///
+    /// A scalar implementation is provided by default.
+    fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, U4>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
+        for (input_pixel, output_pixel) in input.iter().zip(output.iter_mut()) {
+            let r = input_pixel[0] as f32;
+            let g = input_pixel[1] as f32;
+            let b = input_pixel[2] as f32;
+            let luma = f32::from_ne_bytes(R_COEFF.to_ne_bytes()) * r
+                + f32::from_ne_bytes(G_COEFF.to_ne_bytes()) * g
+                + f32::from_ne_bytes(B_COEFF.to_ne_bytes()) * b;
+            *output_pixel = luma;
+        }
+    }
 
     /// Return an identification of the kernel. For composite kernels that route to multiple kernels, report the kernel that would be executed.
     fn ident(&self) -> Self::Ident;

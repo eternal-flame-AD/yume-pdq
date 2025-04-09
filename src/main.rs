@@ -20,7 +20,6 @@
  */
 
 use clap::{Arg, ArgAction, Command, value_parser};
-use rand::SeedableRng;
 use std::{
     hash::RandomState,
     io::{Read, Write},
@@ -33,19 +32,91 @@ use std::{
 use generic_array::{
     ArrayLength,
     sequence::{Flatten, GenericSequence},
-    typenum::{B1, U4, Unsigned},
+    typenum::{B1, U3, U4, Unsigned},
 };
 #[allow(unused_imports)]
 use yume_pdq::{
     GenericArray, PDQHash, PDQHashF,
     alignment::Align32,
     kernel::{
-        FallbackKernel, Kernel,
+        FallbackKernel, Kernel, constants,
         router::KernelRouter,
         type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
     },
     lut_utils,
 };
+
+type SyntheticRng = XorShiftRng;
+
+struct XorShiftRng {
+    states: [u32; 8],
+}
+
+impl XorShiftRng {
+    fn seed_from_u64(seed: u64) -> Self {
+        Self {
+            states: core::array::from_fn(|i| {
+                let mut s = seed + i as u64;
+                s ^= s << 11;
+                s ^= s >> 8;
+                s as u32
+            }),
+        }
+    }
+    #[inline(always)]
+    fn update(&mut self) {
+        self.states[0] ^= self.states[0] << 11;
+        self.states[0] ^= self.states[0] >> 8;
+        self.states[1] ^= self.states[1] << 11;
+        self.states[1] ^= self.states[1] >> 8;
+        self.states[2] ^= self.states[2] << 11;
+        self.states[2] ^= self.states[2] >> 8;
+        self.states[3] ^= self.states[3] << 11;
+        self.states[3] ^= self.states[3] >> 8;
+        (
+            self.states[3],
+            self.states[2],
+            self.states[1],
+            self.states[0],
+        ) = (
+            self.states[2],
+            self.states[1],
+            self.states[0],
+            self.states[3],
+        );
+        self.states[4] ^= self.states[4] << 11;
+        self.states[4] ^= self.states[4] >> 8;
+        self.states[5] ^= self.states[5] << 11;
+        self.states[5] ^= self.states[5] >> 8;
+        self.states[6] ^= self.states[6] << 11;
+        self.states[6] ^= self.states[6] >> 8;
+        self.states[7] ^= self.states[7] << 11;
+        self.states[7] ^= self.states[7] >> 8;
+        (
+            self.states[7],
+            self.states[6],
+            self.states[5],
+            self.states[4],
+        ) = (
+            self.states[6],
+            self.states[5],
+            self.states[4],
+            self.states[7],
+        );
+    }
+}
+
+impl Read for XorShiftRng {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        for chunk in buf.chunks_mut(4 * 8) {
+            self.update();
+            chunk.copy_from_slice(unsafe {
+                core::mem::transmute::<&[u32; 8], &[u8; 32]>(&self.states)
+            });
+        }
+        Ok(buf.len())
+    }
+}
 
 fn build_cli() -> Command {
     Command::new("yume-pdq")
@@ -108,6 +179,13 @@ Usage examples with common tools:
                              Expects 512x512 grayscale images in raw format.",
                         )
                         .default_value("-"),
+                )
+                .arg(
+                    Arg::new("input_format")
+                        .long("input-format")
+                        .help("Input format")
+                        .default_value("luma8")
+                        .long_help("Input format. Use 'luma8' for grayscale images, 'rgb8' for RGB images, or 'rgba8' for RGBA images."),
                 )
                 .arg(
                     Arg::new("output")
@@ -240,6 +318,10 @@ struct BufferPad {
     _pad: [f32; 16],
 }
 
+const INPUT_FORMAT_LUMA8: u8 = 0;
+const INPUT_FORMAT_RGB8: u8 = 1;
+const INPUT_FORMAT_RGBA8: u8 = 2;
+
 const OUTPUT_FLAG_UPPER: u8 = 128;
 const OUTPUT_TYPE_RAW: u8 = 0;
 const OUTPUT_TYPE_RAW_PREFIX_QUALITY: u8 = 1;
@@ -285,6 +367,7 @@ struct PairProcessor<
     K: Kernel + Send + Sync,
     R: Read + Send + Sync,
     W: Write + Send + Sync,
+    const INPUT_FORMAT: u8,
     const OUTPUT_TYPE: u8,
 > where
     K::OutputDimension: DivisibleBy8,
@@ -295,8 +378,13 @@ struct PairProcessor<
     writer: W,
 }
 
-impl<K: Kernel + Send + Sync, R: Read + Send + Sync, W: Write + Send + Sync, const OUTPUT_TYPE: u8>
-    PairProcessor<K, R, W, OUTPUT_TYPE>
+impl<
+    K: Kernel + Send + Sync,
+    R: Read + Send + Sync,
+    W: Write + Send + Sync,
+    const INPUT_FORMAT: u8,
+    const OUTPUT_TYPE: u8,
+> PairProcessor<K, R, W, INPUT_FORMAT, OUTPUT_TYPE>
 where
     K::OutputDimension: DivisibleBy8,
     <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
@@ -367,31 +455,129 @@ where
                     .as_mut()
                     .unwrap();
                     for i in 0..K::InputDimension::USIZE {
-                        let mut row_buf = Align32::<GenericArray<u8, K::InputDimension>>::default();
-                        let mut ptr = 0;
-                        while ptr < K::InputDimension::USIZE {
-                            match reader_mut.read(&mut row_buf[ptr..]) {
-                                Ok(0) => {
-                                    if ptr > 0 {
-                                        return Err(std::io::Error::new(
-                                            std::io::ErrorKind::UnexpectedEof,
-                                            "Unexpected EOF while reading the middle of a frame",
-                                        ));
-                                    } else {
-                                        return Ok(());
+                        match INPUT_FORMAT {
+                            INPUT_FORMAT_LUMA8 => {
+                                let mut row_buf =
+                                    Align32::<GenericArray<u8, K::InputDimension>>::default();
+                                let mut ptr = 0;
+                                while ptr < K::InputDimension::USIZE {
+                                    match reader_mut.read(&mut row_buf[ptr..]) {
+                                        Ok(0) => {
+                                            if ptr > 0 {
+                                                return Err(std::io::Error::new(
+                                                    std::io::ErrorKind::UnexpectedEof,
+                                                    "Unexpected EOF while reading the middle of a frame",
+                                                ));
+                                            } else {
+                                                return Ok(());
+                                            }
+                                        }
+                                        Ok(s) => {
+                                            ptr += s;
+                                        }
+                                        Err(e) => {
+                                            return Err(e);
+                                        }
                                     }
                                 }
-                                Ok(s) => {
-                                    ptr += s;
-                                }
-                                Err(e) => {
-                                    return Err(e);
+
+                                for j in 0..K::InputDimension::USIZE {
+                                    input_buf_mut[i][j] = row_buf[j] as f32;
                                 }
                             }
-                        }
+                            INPUT_FORMAT_RGB8 => {
+                                let mut row_buf = GenericArray::<
+                                    GenericArray<u8, U3>,
+                                    K::InputDimension,
+                                >::default();
+                                let mut ptr = 0;
+                                while ptr < K::InputDimension::USIZE * 3 {
+                                    match reader_mut.read(&mut core::slice::from_raw_parts_mut(
+                                        row_buf.as_mut_ptr().cast::<u8>().add(ptr),
+                                        K::InputDimension::USIZE * 3 - ptr,
+                                    )) {
+                                        Ok(0) => {
+                                            if ptr > 0 {
+                                                return Err(std::io::Error::new(
+                                                    std::io::ErrorKind::UnexpectedEof,
+                                                    "Unexpected EOF while reading the middle of a frame",
+                                                ));
+                                            } else {
+                                                return Ok(());
+                                            }
+                                        }
+                                        Ok(s) => {
+                                            ptr += s;
+                                        }
+                                        Err(e) => {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
 
-                        for j in 0..K::InputDimension::USIZE {
-                            input_buf_mut[i][j] = row_buf[j] as f32;
+                                kernel.cvt_rgb8_to_luma8f::<{
+                                    u32::from_ne_bytes(f32::to_ne_bytes(
+                                        constants::RGB8_TO_LUMA8_TABLE_ITU[0],
+                                    ))
+                                }, {
+                                    u32::from_ne_bytes(f32::to_ne_bytes(
+                                        constants::RGB8_TO_LUMA8_TABLE_ITU[1],
+                                    ))
+                                }, {
+                                    u32::from_ne_bytes(f32::to_ne_bytes(
+                                        constants::RGB8_TO_LUMA8_TABLE_ITU[2],
+                                    ))
+                                }>(
+                                    &row_buf, &mut input_buf_mut[i]
+                                );
+                            }
+                            INPUT_FORMAT_RGBA8 => {
+                                let mut row_buf = GenericArray::<
+                                    GenericArray<u8, U4>,
+                                    K::InputDimension,
+                                >::default();
+                                let mut ptr = 0;
+                                while ptr < K::InputDimension::USIZE * 4 {
+                                    match reader_mut.read(&mut core::slice::from_raw_parts_mut(
+                                        row_buf.as_mut_ptr().cast::<u8>().add(ptr),
+                                        K::InputDimension::USIZE * 4 - ptr,
+                                    )) {
+                                        Ok(0) => {
+                                            if ptr > 0 {
+                                                return Err(std::io::Error::new(
+                                                    std::io::ErrorKind::UnexpectedEof,
+                                                    "Unexpected EOF while reading the middle of a frame",
+                                                ));
+                                            } else {
+                                                return Ok(());
+                                            }
+                                        }
+                                        Ok(s) => {
+                                            ptr += s;
+                                        }
+                                        Err(e) => {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+
+                                kernel.cvt_rgba8_to_luma8f::<{
+                                    u32::from_ne_bytes(f32::to_ne_bytes(
+                                        constants::RGB8_TO_LUMA8_TABLE_ITU[0],
+                                    ))
+                                }, {
+                                    u32::from_ne_bytes(f32::to_ne_bytes(
+                                        constants::RGB8_TO_LUMA8_TABLE_ITU[1],
+                                    ))
+                                }, {
+                                    u32::from_ne_bytes(f32::to_ne_bytes(
+                                        constants::RGB8_TO_LUMA8_TABLE_ITU[2],
+                                    ))
+                                }>(
+                                    &row_buf, &mut input_buf_mut[i]
+                                );
+                            }
+                            _ => unreachable!(),
                         }
                     }
                 }
@@ -569,23 +755,6 @@ fn type_name_of<T>(_: &T) -> &'static str {
     std::any::type_name::<T>()
 }
 
-struct RandReadAdaptor<R: rand::RngCore + Send + Sync> {
-    rng: R,
-}
-
-impl<R: rand::RngCore + Send + Sync> RandReadAdaptor<R> {
-    fn new(rng: R) -> Self {
-        Self { rng }
-    }
-}
-
-impl<R: rand::RngCore + Send + Sync> std::io::Read for RandReadAdaptor<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.rng.fill_bytes(buf);
-        Ok(buf.len())
-    }
-}
-
 fn main() {
     let matches = build_cli().get_matches();
 
@@ -628,7 +797,7 @@ fn main() {
             let _ = sub_matches;
             use std::hash::BuildHasher;
             let key = RandomState::new().hash_one(0);
-            let seeded = rand::rngs::SmallRng::seed_from_u64(key);
+            let seeded = SyntheticRng::seed_from_u64(key);
             let rng = seeded;
 
             let (kernel0, kernel1) = {
@@ -643,8 +812,8 @@ fn main() {
             #[cfg(feature = "hpc")]
             let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
 
-            let processor = PairProcessor::<_, _, _, OUTPUT_TYPE_RAW>::new_fast(
-                std::io::BufReader::new(RandReadAdaptor::new(rng)),
+            let processor = PairProcessor::<_, _, _, INPUT_FORMAT_RGBA8, OUTPUT_TYPE_RAW>::new_fast(
+                std::io::BufReader::new(rng),
                 std::io::sink(),
             );
             thread::scope(|s| unsafe {
@@ -742,15 +911,14 @@ fn main() {
             });
         }
         Some(("random-stream", _)) => {
-            use rand::RngCore;
             use std::hash::BuildHasher;
             let key = RandomState::new().hash_one(0);
-            let seeded = rand::rngs::SmallRng::seed_from_u64(key);
+            let seeded = SyntheticRng::seed_from_u64(key);
             let mut rng = seeded;
             let mut buf = [0; 8192];
             let mut output = std::io::BufWriter::new(std::io::stdout());
             loop {
-                rng.fill_bytes(&mut buf);
+                rng.read(&mut buf).expect("Failed to read from stdin");
                 output.write_all(&buf).expect("Failed to write to stdout");
             }
         }
@@ -764,6 +932,10 @@ fn main() {
             let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
             let arg_stats = sub_matches.get_flag("stats");
             let mut arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
+            let arg_input_format = sub_matches
+                .get_one::<String>("input_format")
+                .unwrap()
+                .clone();
 
             let osep = arg_output_format.split('+').last().and_then(|s| match s {
                 #[cfg(all(target_family = "unix", not(target_os = "macos")))]
@@ -802,10 +974,10 @@ fn main() {
             let writer = open_writer(&arg_output).unwrap();
 
             macro_rules! match_format {
-                ($($spec:pat => $otype:ident),* $(,)?) => {
+                ($intype:ident + $($spec:pat => $otype:ident),* $(,)?) => {
                     match arg_output_format.as_str() {
                         $($spec => {
-                            let processor = PairProcessor::<_, _, _, $otype>::new_fast(reader, writer);
+                            let processor = PairProcessor::<_, _, _, $intype, $otype>::new_fast(reader, writer);
                             thread::scope(|s| {
                                 let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
                                     if arg_stats {
@@ -907,32 +1079,57 @@ fn main() {
                 }
             }
 
-            match_format!(
-                "raw" | "Raw" | "RAW" => OUTPUT_TYPE_RAW,
-                "q+raw" | "q+Raw" | "q+RAW" => OUTPUT_TYPE_RAW_PREFIX_QUALITY,
+            macro_rules! match_input_format {
+                ($($intype_str:pat => $intype:ident),* $(,)?) => {
+                    match arg_input_format.as_str() {
+                        $($intype_str => {
+                            match_format!($intype +
+                                "raw" | "Raw" | "RAW" => OUTPUT_TYPE_RAW,
+                                "q+raw" | "q+Raw" | "q+RAW" => OUTPUT_TYPE_RAW_PREFIX_QUALITY,
 
-                "hex" => OUTPUT_TYPE_ASCII_HEX,
-                "HEX" => OUTPUT_TYPE_ASCII_HEX_UPPER,
-                "bin" | "BIN" => OUTPUT_TYPE_ASCII_BINARY,
+                                "hex" => OUTPUT_TYPE_ASCII_HEX,
+                                "HEX" => OUTPUT_TYPE_ASCII_HEX_UPPER,
+                                "bin" | "BIN" => OUTPUT_TYPE_ASCII_BINARY,
 
-                "q+hex" => OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY,
-                "q+HEX" => OUTPUT_TYPE_ASCII_HEX_UPPER_PREFIX_QUALITY,
+                                "q+hex" => OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY,
+                                "q+HEX" => OUTPUT_TYPE_ASCII_HEX_UPPER_PREFIX_QUALITY,
 
-                "q+bin" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
-                "q+BIN" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
+                                "q+bin" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
+                                "q+BIN" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
+                            );
+                        }),*
+                        _ => {
+                            eprintln!(r#"invalid input format: '{}',
+                            
+                            please try one of the following:
+                            "#, arg_input_format);
+                            std::process::exit(255);
+                        }
+                    }
+                };
+            }
+
+            match_input_format!(
+                "luma8" | "LUMA8" => INPUT_FORMAT_LUMA8,
+                "rgb8" | "RGB8" => INPUT_FORMAT_RGB8,
+                "rgba8" | "RGBA8" => INPUT_FORMAT_RGBA8,
             );
         }
         #[cfg(feature = "cli-bench")]
         Some(("bench", sub_matches)) => {
             use std::hash::BuildHasher;
             let num = RandomState::new().hash_one(0);
-            let rng = rand::rngs::SmallRng::seed_from_u64(num);
+            let rng = SyntheticRng::seed_from_u64(num);
             // replicate the indirection on the real version
-            let reader = std::io::BufReader::new(RandReadAdaptor::new(rng));
-            let rng2 = rand::rngs::SmallRng::seed_from_u64(num);
-            let reader2 = std::io::BufReader::new(RandReadAdaptor::new(rng2));
-            let rng3 = rand::rngs::SmallRng::seed_from_u64(num);
-            let reader3 = std::io::BufReader::new(RandReadAdaptor::new(rng3));
+            let reader = rng;
+            let rng2 = SyntheticRng::seed_from_u64(num);
+            let reader2 = rng2;
+            let rng3 = SyntheticRng::seed_from_u64(num);
+            let reader3 = rng3;
+            let rng4 = SyntheticRng::seed_from_u64(num);
+            let reader4 = rng4;
+            let rng5 = SyntheticRng::seed_from_u64(num);
+            let reader5 = rng5;
             let mut crit = criterion::Criterion::default().without_plots();
             #[cfg_attr(not(feature = "hpc"), expect(unused))]
             let core0 = sub_matches.get_one::<usize>("core0").map(|s| *s);
@@ -944,87 +1141,73 @@ fn main() {
                 std::io::pipe().expect("Failed to create loopback pipe");
             let (mut pipe_rx_bin, pipe_tx_bin) =
                 std::io::pipe().expect("Failed to create loopback pipe");
+            let (mut pipe_rx_rgb, pipe_tx_rgb) =
+                std::io::pipe().expect("Failed to create loopback pipe");
+            let (mut pipe_rx_rgba, pipe_tx_rgba) =
+                std::io::pipe().expect("Failed to create loopback pipe");
 
-            let processor = PairProcessor::<_, _, _, OUTPUT_TYPE_RAW>::new_fast(reader, pipe_tx);
+            let processor = PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_RAW>::new_fast(
+                reader, pipe_tx,
+            );
 
             let processor_hex =
-                PairProcessor::<_, _, _, OUTPUT_TYPE_ASCII_HEX>::new_fast(reader2, pipe_tx_hex);
+                PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_ASCII_HEX>::new_fast(
+                    reader2,
+                    pipe_tx_hex,
+                );
 
             let processor_bin =
-                PairProcessor::<_, _, _, OUTPUT_TYPE_ASCII_BINARY>::new_fast(reader3, pipe_tx_bin);
+                PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_ASCII_BINARY>::new_fast(
+                    reader3,
+                    pipe_tx_bin,
+                );
+
+            let processor_rgb =
+                PairProcessor::<_, _, _, INPUT_FORMAT_RGB8, OUTPUT_TYPE_ASCII_HEX>::new_fast(
+                    reader4,
+                    pipe_tx_rgb,
+                );
+
+            let processor_rgba =
+                PairProcessor::<_, _, _, INPUT_FORMAT_RGBA8, OUTPUT_TYPE_ASCII_HEX>::new_fast(
+                    reader5,
+                    pipe_tx_rgba,
+                );
 
             thread::scope(|s| {
-                let kernel0 = yume_pdq::kernel::smart_kernel();
-                let kernel1 = yume_pdq::kernel::smart_kernel();
-                let kernel2 = yume_pdq::kernel::smart_kernel();
-                let kernel3 = yume_pdq::kernel::smart_kernel();
-                let kernel4 = yume_pdq::kernel::smart_kernel();
-                let kernel5 = yume_pdq::kernel::smart_kernel();
-                s.spawn(|| unsafe {
-                    processor
-                        .loop_thread::<true, false>(
-                            kernel0,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            core0,
-                        )
-                        .expect("Failed to spawn worker thread 0");
-                });
+                macro_rules! spawn_pair {
+                    ($processor:expr) => {
+                        let kern0 = yume_pdq::kernel::smart_kernel();
+                        let kern1 = yume_pdq::kernel::smart_kernel();
+                        s.spawn(|| unsafe {
+                            $processor
+                                .loop_thread::<true, false>(
+                                    kern0,
+                                    b"",
+                                    #[cfg(feature = "hpc")]
+                                    core0,
+                                )
+                                .expect("Failed to spawn worker thread 0");
+                        });
 
-                s.spawn(|| unsafe {
-                    processor
-                        .loop_thread::<false, false>(
-                            kernel1,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            core1,
-                        )
-                        .expect("Failed to spawn worker thread 1");
-                });
+                        s.spawn(|| unsafe {
+                            $processor
+                                .loop_thread::<false, false>(
+                                    kern1,
+                                    b"",
+                                    #[cfg(feature = "hpc")]
+                                    core1,
+                                )
+                                .expect("Failed to spawn worker thread 1");
+                        });
+                    };
+                }
 
-                s.spawn(|| unsafe {
-                    processor_hex
-                        .loop_thread::<true, false>(
-                            kernel2,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            core0,
-                        )
-                        .expect("Failed to spawn worker thread 2");
-                });
-
-                s.spawn(|| unsafe {
-                    processor_hex
-                        .loop_thread::<false, false>(
-                            kernel3,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            core1,
-                        )
-                        .expect("Failed to spawn worker thread 3");
-                });
-
-                s.spawn(|| unsafe {
-                    processor_bin
-                        .loop_thread::<true, false>(
-                            kernel4,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            core0,
-                        )
-                        .expect("Failed to spawn worker thread 4");
-                });
-
-                s.spawn(|| unsafe {
-                    processor_bin
-                        .loop_thread::<false, false>(
-                            kernel5,
-                            b"",
-                            #[cfg(feature = "hpc")]
-                            core1,
-                        )
-                        .expect("Failed to spawn worker thread 5");
-                });
+                spawn_pair!(processor);
+                spawn_pair!(processor_hex);
+                spawn_pair!(processor_bin);
+                spawn_pair!(processor_rgb);
+                spawn_pair!(processor_rgba);
 
                 let mut group = crit.benchmark_group("pdq_pingpong");
                 group.throughput(criterion::Throughput::Bytes(512 * 512));
@@ -1065,6 +1248,38 @@ fn main() {
                     b.iter(|| {
                         let mut hash: [u8; 256 / 8 * 8] = [0; 256 / 8 * 8];
                         pipe_rx_bin.read_exact(&mut hash).unwrap();
+                        hash
+                    });
+                });
+
+                drop(group);
+
+                let mut group = crit.benchmark_group("pdq_rgb_pingpong");
+                group.throughput(criterion::Throughput::Bytes(512 * 512 * 3));
+                group.measurement_time(std::time::Duration::from_secs(15));
+                // make sure we drained everything already processed
+                group.warm_up_time(std::time::Duration::from_secs(10));
+
+                group.bench_function("hash", |b| {
+                    b.iter(|| {
+                        let mut hash: [u8; 256 / 8 * 2] = [0; 256 / 8 * 2];
+                        pipe_rx_rgb.read_exact(&mut hash).unwrap();
+                        hash
+                    });
+                });
+
+                drop(group);
+
+                let mut group = crit.benchmark_group("pdq_rgba_pingpong");
+                group.throughput(criterion::Throughput::Bytes(512 * 512 * 4));
+                group.measurement_time(std::time::Duration::from_secs(15));
+                // make sure we drained everything already processed
+                group.warm_up_time(std::time::Duration::from_secs(10));
+
+                group.bench_function("hash", |b| {
+                    b.iter(|| {
+                        let mut hash: [u8; 256 / 8 * 2] = [0; 256 / 8 * 2];
+                        pipe_rx_rgba.read_exact(&mut hash).unwrap();
                         hash
                     });
                 });
