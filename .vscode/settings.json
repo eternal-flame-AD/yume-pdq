@@ -6,7 +6,9 @@
         "cli",
         "unstable",
         "portable-simd",
-        "ffi"
+        "ffi",
+        "cli-bench",
+        "opencv"
     ],
     "psi-header.config": {
         "license": "Custom"
