@@ -35,7 +35,7 @@ rug = "1.27"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
-image = "0.25"
+image = { version = "0.25", features = ["png", "jpeg"], default-features = false }
 pdqhash = "0.1.1"
 rand = "0.9"
 rayon = "1.10"

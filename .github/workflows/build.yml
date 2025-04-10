@@ -244,6 +244,12 @@ jobs:
           cargo build --release --lib --features "ffi portable-simd-fma" \
           --target x86_64-pc-windows-gnu
         cp target/x86_64-pc-windows-gnu/release/yume_pdq.dll ci-release/yume_pdq_portable_simd.dll
+    
+    - name: Dependency and License Audit
+      run: |
+        cargo install cargo-deny
+        cargo deny check
+        cargo deny list -f tsv > ci-release/dependency-audit.tsv
 
     - name: Publish Artifacts
       uses: actions/upload-artifact@v4
