@@ -29,9 +29,7 @@ export function ImageEditor() {
     const [inputImageData, _1] = useState<Float32Array>(new Float32Array(512 * 512));
     const [tmpHash, _3] = useState<Uint8Array>(new Uint8Array(32));
     const [currentHash, setCurrentHash] = useState<[number, Int8Array, Uint8Array][]>([]);
-    const [conversionTime, setConversionTime] = useState<number>(0);
     const [binarySelectionIndex, setBinarySelectionIndex] = useState<number | null>(null);
-    const [hashTime, setHashTime] = useState<number>(0);
     const [benchmarkTime, setBenchmarkTime] = useState<number | null>(null);
     useEffect(() => {
         if (canvasRef.current && !canvasInitialized) {
@@ -57,19 +55,12 @@ export function ImageEditor() {
         const imageData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height, {
             colorSpace: 'srgb',
         });
-        const start0 = performance.now();
         yumePDQ.cvt_rgba8_to_luma8f(new Uint8Array(imageData.data), inputImageData);
-        const end0 = performance.now();
-        setConversionTime(end0 - start0);
-        const start1 = performance.now();
         let putputList: [number, Int8Array, Uint8Array][] = [];
-
         yumePDQ.hash_luma8(inputImageData, tmpHash, 1, (quality: number, dihedral: Int8Array, output: Uint8Array) => {
             putputList.push([quality, dihedral, output]);
             return true;
         });
-        const end1 = performance.now();
-        setHashTime(end1 - start1);
         setCurrentHash(putputList);
     }
 
@@ -124,6 +115,7 @@ export function ImageEditor() {
         }
     }
 
+    const showTrackingNote = currentHash.length > 0 && currentHash[0][0] < 0.1;
 
     return (
         <div className="canvas-container">
@@ -133,8 +125,7 @@ export function ImageEditor() {
             <button onClick={benchmark}>{benchmarkTime ? `${(benchmarkTime * 1000).toFixed(3)} us` : 'Benchmark'}</button>
             <div>
                 <p>Kernel: {yumePDQ.kernel_ident}</p>
-                <p>Conversion time (may be inaccurate): {conversionTime} ms</p>
-                <p>Hash time (may be inaccurate): {hashTime} ms</p>
+                {showTrackingNote && <p>If quality is unexpectedly low, it may be your browser randomized the canvas extract, please temporarily disable tracking protection and try again.</p>}
 
                 <table>
                     <thead>
