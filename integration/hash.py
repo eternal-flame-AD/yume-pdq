@@ -90,7 +90,7 @@ class PDQHasher:
 
         return {
             'quality': quality,
-            'threshold': threshold.value,
+            'threshold': self.threshold.value,
             'hash': hash_hex if quality > 0.5 else None,
             'hash_time': hash_done - conversion_done,
             'conversion_time': conversion_done - start_time,
