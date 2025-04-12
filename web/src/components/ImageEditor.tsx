@@ -96,7 +96,7 @@ export function ImageEditor() {
             });
         }
         const end = performance.now();
-        setBenchmarkTime(end - start);
+        setBenchmarkTime((end - start) / 100);
     }
 
     const handleFileChange = (event: Event) => {
@@ -130,7 +130,7 @@ export function ImageEditor() {
             <canvas ref={canvasRef} width={512} height={512} />
             <input type="file" accept="image/*" onChange={handleFileChange} />
             <button onClick={performHash}>Hash</button>
-            <button onClick={benchmark}>{benchmarkTime ? `${benchmarkTime.toFixed(3)} ms` : 'Benchmark'}</button>
+            <button onClick={benchmark}>{benchmarkTime ? `${(benchmarkTime * 1000).toFixed(3)} us` : 'Benchmark'}</button>
             <div>
                 <p>Kernel: {yumePDQ.kernel_ident}</p>
                 <p>Conversion time (may be inaccurate): {conversionTime} ms</p>

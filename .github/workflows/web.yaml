@@ -21,8 +21,12 @@ jobs:
       uses: actions/setup-node@v3.7.0
       with:
         node-version: 22
-        cache: 'pnpm'
-        
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
     - uses: actions/checkout@v3
     - name: Install nightly toolchain and WASM target
       uses: dtolnay/rust-toolchain@nightly
@@ -38,6 +42,7 @@ jobs:
     - name: Build UI
       run: |
         cd web && rm -rf src/pkg && cp -r ../pkg src/pkg && pnpm i && pnpm build
+        
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
