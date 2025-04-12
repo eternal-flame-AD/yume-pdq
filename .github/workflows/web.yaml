@@ -19,6 +19,10 @@ jobs:
     steps:
     - name: Setup Node.js environment
       uses: actions/setup-node@v3.7.0
+      with:
+        node-version: 22
+        cache: 'pnpm'
+        
     - uses: actions/checkout@v3
     - name: Install nightly toolchain and WASM target
       uses: dtolnay/rust-toolchain@nightly

@@ -57,7 +57,11 @@ impl JSYumePDQ {
 
     #[wasm_bindgen]
     /// Convert a 512x512x4 image to a 512x512 luma8 image.
-    pub fn cvt_rgba8_to_luma8f(&mut self, input: &[u8], output: &mut [f32]) -> Result<(), JsValue> {
+    pub fn cvt_rgba8_to_luma8f(
+        &mut self,
+        input: &[u8],
+        output: &mut [f32],
+    ) -> Result<bool, JsValue> {
         let input_array =
             GenericArray::<u8, Times4<<U512 as SquareOf>::Output>>::try_from_slice(input)
                 .map_err(|_| "Input buffer is not 512x512x4".to_string())?;
@@ -86,7 +90,7 @@ impl JSYumePDQ {
                 u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[2].to_ne_bytes())
             }>(input_slice, output_slice);
         }
-        Ok(())
+        Ok(true)
     }
 
     #[wasm_bindgen]
