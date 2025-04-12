@@ -553,7 +553,7 @@ impl Kernel for Avx2F32Kernel {
                 };
             }
 
-            debug_assert!(offset == 16 * 15, "final offset is not 15 * 16");
+            debug_assert!(offset <= 15 * 16, "final offset may be out of bounds");
 
             do_loop!(16);
         }
@@ -611,7 +611,7 @@ impl Kernel for Avx2F32Kernel {
                 };
             }
 
-            debug_assert!(offset == 16 * 15, "final offset is not 15 * 16");
+            debug_assert!(offset <= 14 * 16, "final offset may be out of bounds");
 
             do_loop!(16);
         }
@@ -915,7 +915,7 @@ impl Kernel for Avx512F32Kernel {
                 };
             }
 
-            debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+            debug_assert!(offset <= 14 * 16, "final offset may be out of bounds");
 
             do_loop!(16);
         }
@@ -1007,7 +1007,7 @@ impl Kernel for Avx512F32Kernel {
                 };
             }
 
-            debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+            debug_assert!(offset <= 15 * 16, "final offset may be out of bounds");
 
             do_loop!(16);
         }

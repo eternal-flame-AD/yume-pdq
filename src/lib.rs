@@ -70,10 +70,10 @@ impl Dihedrals {
     /// Create a new dihedral from a tuple of tuples.
     pub const fn from_tuples(dx: (i8, i8), dy: (i8, i8)) -> Self {
         Self {
-            packed: ((dx.0 as u32) << 24)
-                | ((dx.1 as u32) << 16)
-                | ((dy.0 as u32) << 8)
-                | ((dy.1 as u32) << 0),
+            packed: (((dx.0 as u8) as u32) << 24)
+                | (((dx.1 as u8) as u32) << 16)
+                | (((dy.0 as u8) as u32) << 8)
+                | (((dy.1 as u8) as u32) << 0),
         }
     }
 

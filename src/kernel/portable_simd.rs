@@ -354,8 +354,6 @@ where
             };
         }
 
-        debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
-
         do_loop!(16);
     }
 

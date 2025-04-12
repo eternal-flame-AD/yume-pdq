@@ -14,7 +14,7 @@ function toBase64(array: Uint8Array) {
     return btoa(String.fromCharCode(...array));
 }
 
-function formatDihedral(dihedral: Int8Array) {
+function formatDihedral(dihedral: number[]) {
     let xtox = dihedral[0];
     let ytox = dihedral[1];
     let xtoy = dihedral[2];
@@ -28,7 +28,7 @@ export function ImageEditor() {
     const [canvasInitialized, setCanvasInitialized] = useState(false);
     const [inputImageData, _1] = useState<Float32Array>(new Float32Array(512 * 512));
     const [tmpHash, _3] = useState<Uint8Array>(new Uint8Array(32));
-    const [currentHash, setCurrentHash] = useState<[number, Int8Array, Uint8Array][]>([]);
+    const [currentHash, setCurrentHash] = useState<[number, number[], Uint8Array][]>([]);
     const [binarySelectionIndex, setBinarySelectionIndex] = useState<number | null>(null);
     const [benchmarkTime, setBenchmarkTime] = useState<number | null>(null);
     useEffect(() => {
@@ -56,9 +56,10 @@ export function ImageEditor() {
             colorSpace: 'srgb',
         });
         yumePDQ.cvt_rgba8_to_luma8f(new Uint8Array(imageData.data), inputImageData);
-        let putputList: [number, Int8Array, Uint8Array][] = [];
+        let putputList: [number, number[], Uint8Array][] = [];
         yumePDQ.hash_luma8(inputImageData, tmpHash, 1, (quality: number, dihedral: Int8Array, output: Uint8Array) => {
-            putputList.push([quality, dihedral, output]);
+            console.log(dihedral);
+            putputList.push([quality, [...dihedral], output]);
             return true;
         });
         setCurrentHash(putputList);
@@ -82,10 +83,7 @@ export function ImageEditor() {
         for (let i = 0; i < 100; i++) {
             yumePDQ.cvt_rgba8_to_luma8f(new Uint8Array(imageData.data), inputImageData);
             yumePDQ.hash_luma8(inputImageData, tmpHash, 1, (quality: number, dihedral: Int8Array, output: Uint8Array) => {
-                const dihedralCopy = new Int8Array(dihedral.length);
-                dihedralCopy.set(dihedral);
-
-                results.push([quality, dihedralCopy, output]);
+                results.push([quality, [...dihedral], output]);
                 return true;
             });
         }
