@@ -313,8 +313,18 @@ fn main() {
     );
 
     // computing hashes with dihedral transformations can be done more efficiently by transforming the "pdqf buffer"
-    // see: https://github.com/darwinium-com/pdqhash/blob/1a5f66f635758ee441d8884e1c15203a2ace995d/README.md#consider-additional-image-transformations
-    // a generic API is available in kernel::threshold that helps recompute the final hash from a transformed pdqf buffer
+    // for theoretical details see: 
+    // https://github.com/darwinium-com/pdqhash/blob/1a5f66f635758ee441d8884e1c15203a2ace995d/README.md#consider-additional-image-transformations
+    yume_pdq::visit_dihedrals(
+        &mut kernel,
+        &mut pdqf,
+        &mut output,
+        threshold,
+        |xform, threshold, (new_quality, _pdqf, _output)| {
+            eprintln!("xform: {:?}, threshold: {:?}, new_quality: {:?}", xform, threshold, new_quality);
+            Ok::<(), std::io::Error>(())
+        },
+    ).expect("IO error reported by callback");
 
     // this does the same thing but not require you to ask for a threshold
     let quality_easy = yume_pdq::hash(
