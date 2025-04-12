@@ -20,15 +20,20 @@ jobs:
     - name: Setup Node.js environment
       uses: actions/setup-node@v3.7.0
     - uses: actions/checkout@v3
+    - name: Install nightly toolchain and WASM target
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rust-src
+        targets: wasm32-unknown-unknown
     - name: Install wasm-pack
       run: |
-        yarn global add wasm-pack
+        cargo install wasm-pack
     - name: Build wasm
       run: |
         RUSTFLAGS="-Ctarget-feature=+simd128 -Copt-level=3" wasm-pack build -t web --release --features "wasm-bindgen portable-simd-fma"
     - name: Build UI
       run: |
-        cd web && rm -rf src/pkg && pnpm i && pnpm build
+        cd web && rm -rf src/pkg && cp -r ../pkg src/pkg && pnpm i && pnpm build
     - name: Deploy to GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
