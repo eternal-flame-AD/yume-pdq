@@ -82,7 +82,10 @@ export function ImageEditor() {
         for (let i = 0; i < 100; i++) {
             yumePDQ.cvt_rgba8_to_luma8f(new Uint8Array(imageData.data), inputImageData);
             yumePDQ.hash_luma8(inputImageData, tmpHash, 1, (quality: number, dihedral: Int8Array, output: Uint8Array) => {
-                results.push([quality, dihedral, output]);
+                const dihedralCopy = new Int8Array(dihedral.length);
+                dihedralCopy.set(dihedral);
+
+                results.push([quality, dihedralCopy, output]);
                 return true;
             });
         }
