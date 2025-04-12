@@ -1,11 +1,15 @@
-use generic_array::{GenericArray, sequence::Unflatten, typenum::U32};
+use generic_array::{
+    GenericArray,
+    sequence::Unflatten,
+    typenum::{B0, U32, U512, UInt},
+};
 use wasm_bindgen::prelude::*;
 
 use crate::{
     PDQHashF,
     alignment::Align32,
     kernel::{
-        Kernel, SquareGenericArrayExt,
+        Kernel, SquareGenericArrayExt, constants,
         type_traits::{DivisibleBy8, SquareOf},
     },
 };
@@ -35,6 +39,8 @@ pub struct JSYumePDQ {
     inner: JsYumePDQInner<crate::kernel::DefaultKernel>,
 }
 
+type Times4<T> = UInt<UInt<T, B0>, B0>;
+
 #[wasm_bindgen(js_class = YumePDQ)]
 impl JSYumePDQ {
     #[wasm_bindgen(constructor)]
@@ -47,6 +53,40 @@ impl JSYumePDQ {
     #[wasm_bindgen(getter)]
     pub fn kernel_ident(&self) -> String {
         self.inner.kernel.ident().to_string()
+    }
+
+    #[wasm_bindgen]
+    /// Convert a 512x512x4 image to a 512x512 luma8 image.
+    pub fn cvt_rgba8_to_luma8f(&mut self, input: &[u8], output: &mut [f32]) -> Result<(), JsValue> {
+        let input_array =
+            GenericArray::<u8, Times4<<U512 as SquareOf>::Output>>::try_from_slice(input)
+                .map_err(|_| "Input buffer is not 512x512x4".to_string())?;
+
+        let output_array =
+            GenericArray::<f32, <U512 as SquareOf>::Output>::try_from_mut_slice(output)
+                .map_err(|_| "Output buffer is not 512x512".to_string())?;
+
+        for i in 0..512 {
+            let input_offset = 512 * 4 * i;
+            let output_offset = 512 * i;
+
+            let input_slice = GenericArray::<u8, Times4<U512>>::from_slice(
+                &input_array[input_offset..input_offset + 512 * 4],
+            )
+            .unflatten();
+            let output_slice = GenericArray::<f32, U512>::from_mut_slice(
+                &mut output_array[output_offset..output_offset + 512],
+            );
+
+            self.inner.kernel.cvt_rgba8_to_luma8f::<{
+                u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[0].to_ne_bytes())
+            }, {
+                u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[1].to_ne_bytes())
+            }, {
+                u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[2].to_ne_bytes())
+            }>(input_slice, output_slice);
+        }
+        Ok(())
     }
 
     #[wasm_bindgen]
@@ -106,15 +146,21 @@ impl JSYumePDQ {
                 callback.call3(
                     &JsValue::NULL,
                     &JsValue::from_f64(quality as _),
-                    &JsValue::from([1, 0, 0, 1].to_vec().into_boxed_slice()),
+                    &JsValue::from([1i8, 0, 0, 1].to_vec().into_boxed_slice()),
                     &JsValue::from(pdqf_data),
                 )?;
             } else {
                 callback.call3(
                     &JsValue::NULL,
                     &JsValue::from_f64(quality as _),
-                    &JsValue::from([1, 0, 0, 1].to_vec().into_boxed_slice()),
-                    &JsValue::NULL,
+                    &JsValue::from([1i8, 0, 0, 1].to_vec().into_boxed_slice()),
+                    &JsValue::from(
+                        output_array
+                            .flatten()
+                            .as_slice()
+                            .to_vec()
+                            .into_boxed_slice(),
+                    ),
                 )?;
             }
 
@@ -124,7 +170,7 @@ impl JSYumePDQ {
                     &mut self.inner.buf1_pdqf,
                     &mut output_array,
                     threshold,
-                    |coords, _, (quality, pdqf, _output)| {
+                    |coords, _, (quality, pdqf, output)| {
                         let coords = coords.into_tuples();
                         let dihedral = [coords.0.0, coords.0.1, coords.1.0, coords.1.1]
                             .to_vec()
@@ -142,7 +188,9 @@ impl JSYumePDQ {
                                 &JsValue::NULL,
                                 &JsValue::from_f64(quality as _),
                                 &JsValue::from(dihedral),
-                                &JsValue::NULL,
+                                &JsValue::from(
+                                    output.flatten().as_slice().to_vec().into_boxed_slice(),
+                                ),
                             )?;
                         }
 

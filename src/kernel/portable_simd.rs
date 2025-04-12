@@ -24,6 +24,7 @@ use core::{
     fmt::{Debug, Display},
     ops::BitAnd,
 };
+use std::simd::num::SimdUint;
 
 use generic_array::{
     GenericArray,
@@ -149,6 +150,96 @@ where
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
         scaled.min(1.0)
+    }
+
+    fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) where
+        Self::RequiredHardwareFeature:
+            super::type_traits::EvaluateHardwareFeature<EnabledStatic = generic_array::typenum::B1>,
+    {
+        unsafe {
+            let mut in_offset = 0;
+            let mut out_offset = 0;
+
+            let coeff_r = SimdPS::<8>::splat(f32::from_ne_bytes(R_COEFF.to_ne_bytes()));
+            let coeff_g = SimdPS::<8>::splat(f32::from_ne_bytes(G_COEFF.to_ne_bytes()));
+            let coeff_b = SimdPS::<8>::splat(f32::from_ne_bytes(B_COEFF.to_ne_bytes()));
+
+            macro_rules! do_loop {
+                (8) => {
+                    // 8 pixels in 32 bytes, place into exactly 8 output elements (1 lane)
+                    // note this is little endian, so the ordering is pretty unintuitive
+                    let data = input
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(in_offset)
+                        .cast::<Simd<u32, 8>>()
+                        .read_unaligned();
+                    let mask32 = Simd::<u32, 8>::splat(0x000000FF);
+                    #[cfg(target_endian = "little")]
+                    let output_r = (data & mask32).cast();
+                    #[cfg(target_endian = "big")]
+                    let output_r = (data >> 24 & mask32).cast();
+                    #[cfg(target_endian = "little")]
+                    let output_g = ((data >> 8) & mask32).cast();
+                    #[cfg(target_endian = "big")]
+                    let output_g = ((data >> 16) & mask32).cast();
+                    #[cfg(target_endian = "little")]
+                    let output_b = ((data >> 16) & mask32).cast();
+                    #[cfg(target_endian = "big")]
+                    let output_b = ((data >> 8) & mask32).cast();
+                    let mut output_v: SimdPS<8> = output_r * coeff_r;
+                    fma!(output_v += (output_g) * (coeff_g));
+                    fma!(output_v += (output_b) * (coeff_b));
+                    output
+                        .as_mut_ptr()
+                        .add(out_offset)
+                        .cast::<SimdPS<8>>()
+                        .write_unaligned(output_v);
+                };
+                (16) => {
+                    do_loop!(8);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(8);
+                };
+                (32) => {
+                    do_loop!(16);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(16);
+                };
+                (64) => {
+                    do_loop!(32);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(32);
+                };
+                (128) => {
+                    do_loop!(64);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(64);
+                };
+                (256) => {
+                    do_loop!(128);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(128);
+                };
+                (512) => {
+                    do_loop!(256);
+                    in_offset += 32;
+                    out_offset += 8;
+                    do_loop!(256);
+                };
+            }
+
+            do_loop!(512);
+        }
     }
 
     fn jarosz_compress(

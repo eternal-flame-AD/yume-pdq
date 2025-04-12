@@ -1,0 +1,36 @@
+name: Web
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Setup Node.js environment
+      uses: actions/setup-node@v3.7.0
+    - uses: actions/checkout@v3
+    - name: Install wasm-pack
+      run: |
+        yarn global add wasm-pack
+    - name: Build wasm
+      run: |
+        RUSTFLAGS="-Ctarget-feature=+simd128 -Copt-level=3" wasm-pack build -t web --release --features "wasm-bindgen portable-simd-fma"
+    - name: Build UI
+      run: |
+        cd web && rm -rf src/pkg && pnpm i && pnpm build
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./web/dist

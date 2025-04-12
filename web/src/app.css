@@ -1,0 +1,19 @@
+.canvas-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+
+@media (min-width: 1024px) {
+  .canvas-container {
+    max-width: 1024px;
+  }
+}
+
+
+.chop {
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}

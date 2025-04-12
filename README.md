@@ -5,6 +5,8 @@
 
 A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm (hyperparameter altered to optimize for modern CPUs) that prioritizes low latency, high throughput with statistically low upper-bound false negative rate, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only), with no-std and LLVM SafeStack+CFI hardening support.
 
+[Try it on WASM now!](https://eternal-flame-ad.github.io/yume-pdq/)
+
 ## Table of Contents
 
 - [yume-pdq](#yume-pdq)
