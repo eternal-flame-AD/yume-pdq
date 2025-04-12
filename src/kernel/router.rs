@@ -69,6 +69,46 @@ trait KernelFallthrough<
         false
     }
 
+    fn pdqf_t_opt<const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        false
+    }
+
+    fn pdqf_negate_alt_cols_opt<const NEGATE: bool, const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        false
+    }
+
+    fn pdqf_negate_alt_rows_opt<const NEGATE: bool, const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        false
+    }
+
+    fn pdqf_negate_off_diagonals_opt<const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        false
+    }
+
     fn cvt_rgb8_to_luma8f_opt<
         const CHECKED: bool,
         const R_COEFF: u32,
@@ -207,6 +247,66 @@ where
         true
     }
 
+    fn pdqf_negate_alt_cols_opt<const NEGATE: bool, const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        if CHECKED && !self.would_run() {
+            return false;
+        }
+
+        self.pdqf_negate_alt_cols::<NEGATE>(_input);
+        true
+    }
+
+    fn pdqf_negate_alt_rows_opt<const NEGATE: bool, const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        if CHECKED && !self.would_run() {
+            return false;
+        }
+
+        self.pdqf_negate_alt_rows::<NEGATE>(_input);
+        true
+    }
+
+    fn pdqf_negate_off_diagonals_opt<const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        if CHECKED && !self.would_run() {
+            return false;
+        }
+
+        self.pdqf_negate_off_diagonals(_input);
+        true
+    }
+
+    fn pdqf_t_opt<const CHECKED: bool>(
+        &mut self,
+        _input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) -> bool {
+        if CHECKED && !self.would_run() {
+            return false;
+        }
+
+        self.pdqf_t(_input);
+        true
+    }
+
     fn jarosz_compress_opt<const CHECKED: bool>(
         &mut self,
         buffer: &GenericArray<
@@ -303,7 +403,7 @@ where
 }
 
 /// A static fallback router for composing kernels.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct KernelRouter<P, F> {
     materialized_decision: bool,
     preferred: P,
@@ -571,6 +671,70 @@ where
 
         self.fallback
             .cvt_rgba8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+    }
+
+    fn pdqf_negate_alt_cols<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
+            if self.preferred.pdqf_negate_alt_cols_opt::<NEGATE, false>(input) {
+                return;
+            }
+        }
+
+        self.fallback.pdqf_negate_alt_cols::<NEGATE>(input);
+    }
+
+    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
+            if self.preferred.pdqf_negate_alt_rows_opt::<NEGATE, false>(input) {
+                return;
+            }
+        }
+
+        self.fallback.pdqf_negate_alt_rows::<NEGATE>(input);
+    }
+
+    fn pdqf_negate_off_diagonals(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
+            if self.preferred.pdqf_negate_off_diagonals_opt::<false>(input) {
+                return;
+            }
+        }
+
+        self.fallback.pdqf_negate_off_diagonals(input);
+    }
+
+    fn pdqf_t(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
+            if self.preferred.pdqf_t_opt::<false>(input) {
+                return;
+            }
+        }
+
+        self.fallback.pdqf_t(input);
     }
 
     fn jarosz_compress(

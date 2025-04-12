@@ -124,7 +124,7 @@ pub type CpuIdAvx512f = X8664CPUID<7, 0, CPUID_REG_EBX, 16>;
 ///
 /// Note: You MUST compile with `target-feature=+avx2` (or equivalent) to use this kernel, otherwise a very slow
 /// fallback will be emitted by LLVM.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Avx2F32Kernel;
 
 impl Avx2F32Kernel {
@@ -357,6 +357,76 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
     }
 }
 
+#[inline]
+fn cvt_rgba8_to_luma8f_avx2<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+    input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, U512>,
+    output: &mut GenericArray<f32, U512>,
+) {
+    unsafe {
+        let mut in_offset = 0;
+        let mut out_offset = 0;
+        let coeff_r = _mm256_set1_ps(f32::from_ne_bytes(R_COEFF.to_ne_bytes()));
+        let coeff_g = _mm256_set1_ps(f32::from_ne_bytes(G_COEFF.to_ne_bytes()));
+        let coeff_b = _mm256_set1_ps(f32::from_ne_bytes(B_COEFF.to_ne_bytes()));
+
+        macro_rules! do_loop {
+            (8) => {
+                // 8 pixels in 32 bytes, place into exactly 8 output elements (1 lane)
+                // note this is little endian, so the ordering is pretty unintuitive
+                let data = _mm256_loadu_si256(input.as_ptr().cast::<u8>().add(in_offset).cast());
+                let mask32 = _mm256_set1_epi32(0x000000FF);
+                let output_r = _mm256_cvtepi32_ps(_mm256_and_si256(data, mask32));
+                let output_g =
+                    _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<8>(data), mask32));
+                let output_b =
+                    _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<16>(data), mask32));
+                let mut output_v = _mm256_mul_ps(output_r, coeff_r);
+                output_v = _mm256_fmadd_ps(output_g, coeff_g, output_v);
+                output_v = _mm256_fmadd_ps(output_b, coeff_b, output_v);
+                _mm256_storeu_ps(output.as_mut_ptr().add(out_offset), output_v);
+            };
+            (16) => {
+                do_loop!(8);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(8);
+            };
+            (32) => {
+                do_loop!(16);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(16);
+            };
+            (64) => {
+                do_loop!(32);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(32);
+            };
+            (128) => {
+                do_loop!(64);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(64);
+            };
+            (256) => {
+                do_loop!(128);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(128);
+            };
+            (512) => {
+                do_loop!(256);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(256);
+            };
+        }
+
+        do_loop!(512);
+    }
+}
+
 impl Kernel for Avx2F32Kernel {
     type Buffer1WidthX = U128;
     type Buffer1LengthY = U128;
@@ -376,70 +446,7 @@ impl Kernel for Avx2F32Kernel {
         input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
     ) {
-        unsafe {
-            let mut in_offset = 0;
-            let mut out_offset = 0;
-            let coeff_r = _mm256_set1_ps(f32::from_ne_bytes(R_COEFF.to_ne_bytes()));
-            let coeff_g = _mm256_set1_ps(f32::from_ne_bytes(G_COEFF.to_ne_bytes()));
-            let coeff_b = _mm256_set1_ps(f32::from_ne_bytes(B_COEFF.to_ne_bytes()));
-
-            macro_rules! do_loop {
-                (8) => {
-                    // 8 pixels in 32 bytes, place into exactly 8 output elements (1 lane)
-                    // note this is little endian, so the ordering is pretty unintuitive
-                    let data =
-                        _mm256_loadu_si256(input.as_ptr().cast::<u8>().add(in_offset).cast());
-                    let mask32 = _mm256_set1_epi32(0x000000FF);
-                    let output_r = _mm256_cvtepi32_ps(_mm256_and_si256(data, mask32));
-                    let output_g =
-                        _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<8>(data), mask32));
-                    let output_b =
-                        _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<16>(data), mask32));
-                    let mut output_v = _mm256_mul_ps(output_r, coeff_r);
-                    output_v = _mm256_fmadd_ps(output_g, coeff_g, output_v);
-                    output_v = _mm256_fmadd_ps(output_b, coeff_b, output_v);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(out_offset), output_v);
-                };
-                (16) => {
-                    do_loop!(8);
-                    in_offset += 32;
-                    out_offset += 8;
-                    do_loop!(8);
-                };
-                (32) => {
-                    do_loop!(16);
-                    in_offset += 32;
-                    out_offset += 8;
-                    do_loop!(16);
-                };
-                (64) => {
-                    do_loop!(32);
-                    in_offset += 32;
-                    out_offset += 8;
-                    do_loop!(32);
-                };
-                (128) => {
-                    do_loop!(64);
-                    in_offset += 32;
-                    out_offset += 8;
-                    do_loop!(64);
-                };
-                (256) => {
-                    do_loop!(128);
-                    in_offset += 32;
-                    out_offset += 8;
-                    do_loop!(128);
-                };
-                (512) => {
-                    do_loop!(256);
-                    in_offset += 32;
-                    out_offset += 8;
-                    do_loop!(256);
-                };
-            }
-
-            do_loop!(512);
-        }
+        cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
     }
 
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
@@ -458,6 +465,155 @@ impl Kernel for Avx2F32Kernel {
     ) {
         unsafe {
             jarosz_compress_avx2(buffer, output);
+        }
+    }
+
+    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            let neg = _mm256_set1_ps(-1.0);
+            let mut offset = if NEGATE { 0 } else { 16 };
+            macro_rules! do_loop {
+                (2) => {
+                    let row_0_8 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset));
+                    let row_8_16 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset + 8));
+                    let negated_0_8 = _mm256_mul_ps(row_0_8, neg);
+                    let negated_8_16 = _mm256_mul_ps(row_8_16, neg);
+                    _mm256_storeu_ps(input.as_mut_ptr().cast::<f32>().add(offset), negated_0_8);
+                    _mm256_storeu_ps(
+                        input.as_mut_ptr().cast::<f32>().add(offset + 8),
+                        negated_8_16,
+                    );
+                };
+                (4) => {
+                    do_loop!(2);
+                    offset += 32;
+                    do_loop!(2);
+                };
+                (8) => {
+                    do_loop!(4);
+                    offset += 32;
+                    do_loop!(4);
+                };
+                (16) => {
+                    do_loop!(8);
+                    offset += 32;
+                    do_loop!(8);
+                };
+            }
+
+            do_loop!(16);
+        }
+    }
+
+    fn pdqf_negate_alt_cols<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            let coefficients = if NEGATE {
+                _mm256_setr_ps(1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0)
+            } else {
+                _mm256_setr_ps(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+            };
+            let mut offset = 0;
+            macro_rules! do_loop {
+                (1) => {
+                    let row_0_8 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset));
+                    let negated_0_8 = _mm256_mul_ps(row_0_8, coefficients);
+                    _mm256_storeu_ps(input.as_mut_ptr().cast::<f32>().add(offset), negated_0_8);
+                };
+                (2) => {
+                    do_loop!(1);
+                    offset += 16;
+                    do_loop!(1);
+                };
+                (4) => {
+                    do_loop!(2);
+                    offset += 16;
+                    do_loop!(2);
+                };
+                (8) => {
+                    do_loop!(4);
+                    offset += 16;
+                    do_loop!(4);
+                };
+                (16) => {
+                    do_loop!(8);
+                    offset += 16;
+                    do_loop!(8);
+                };
+            }
+
+            debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+
+            do_loop!(16);
+        }
+    }
+
+    fn pdqf_negate_off_diagonals(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            let mul_for_even_rows = _mm256_setr_ps(1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0);
+            let mul_for_odd_rows = _mm256_mul_ps(_mm256_set1_ps(-1.0), mul_for_even_rows);
+            let mut offset = 0;
+            macro_rules! do_loop {
+                (2) => {
+                    let row_0_0_8 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset));
+                    let row_0_8_16 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset + 8));
+                    let row_1_0_8 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset + 16));
+                    let row_1_8_16 = _mm256_loadu_ps(input.as_ptr().cast::<f32>().add(offset + 24));
+                    let negated_0_0_8 = _mm256_mul_ps(row_0_0_8, mul_for_even_rows);
+                    let negated_0_8_16 = _mm256_mul_ps(row_0_8_16, mul_for_even_rows);
+                    let negated_1_0_8 = _mm256_mul_ps(row_1_0_8, mul_for_odd_rows);
+                    let negated_1_8_16 = _mm256_mul_ps(row_1_8_16, mul_for_odd_rows);
+                    _mm256_storeu_ps(input.as_mut_ptr().cast::<f32>().add(offset), negated_0_0_8);
+                    _mm256_storeu_ps(
+                        input.as_mut_ptr().cast::<f32>().add(offset + 8),
+                        negated_0_8_16,
+                    );
+                    _mm256_storeu_ps(
+                        input.as_mut_ptr().cast::<f32>().add(offset + 16),
+                        negated_1_0_8,
+                    );
+                    _mm256_storeu_ps(
+                        input.as_mut_ptr().cast::<f32>().add(offset + 24),
+                        negated_1_8_16,
+                    );
+                };
+                (4) => {
+                    do_loop!(2);
+                    offset += 32;
+                    do_loop!(2);
+                };
+                (8) => {
+                    do_loop!(4);
+                    offset += 32;
+                    do_loop!(4);
+                };
+                (16) => {
+                    do_loop!(8);
+                    offset += 32;
+                    do_loop!(8);
+                };
+            }
+
+            debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+
+            do_loop!(16);
         }
     }
 
@@ -682,7 +838,7 @@ impl Kernel for Avx2F32Kernel {
 ///
 /// Benchmark shows it is only slightly faster (~20%) than AVX2 for DCT2D and marginal overall and requires a less common CPU flag+nightly Rust compiler thus feature gated.
 #[cfg(feature = "avx512")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Avx512F32Kernel;
 
 #[cfg(feature = "avx512")]
@@ -708,20 +864,153 @@ impl Kernel for Avx512F32Kernel {
         scaled.min(1.0)
     }
 
-    fn cvt_rgb8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-        &mut self,
-        input: &GenericArray<GenericArray<u8, generic_array::typenum::U3>, Self::InputDimension>,
-        output: &mut GenericArray<f32, Self::InputDimension>,
-    ) {
-        Avx2F32Kernel.cvt_rgb8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
-    }
-
     fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
         &mut self,
         input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
     ) {
-        Avx2F32Kernel.cvt_rgba8_to_luma8f::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+        cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+    }
+
+    fn pdqf_negate_off_diagonals(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            let mul_for_even_rows = _mm512_setr_ps(
+                1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0,
+                -1.0,
+            );
+            let mul_for_odd_rows = _mm512_mul_ps(_mm512_set1_ps(-1.0), mul_for_even_rows);
+            let mut offset = 0;
+            macro_rules! do_loop {
+                (2) => {
+                    let row_0_0_16 = _mm512_loadu_ps(input.as_ptr().cast::<f32>().add(offset));
+                    let negated_0_0_16 = _mm512_mul_ps(row_0_0_16, mul_for_even_rows);
+                    let row_1_0_16 = _mm512_loadu_ps(input.as_ptr().cast::<f32>().add(offset + 16));
+                    let negated_1_0_16 = _mm512_mul_ps(row_1_0_16, mul_for_odd_rows);
+                    _mm512_storeu_ps(input.as_mut_ptr().cast::<f32>().add(offset), negated_0_0_16);
+                    _mm512_storeu_ps(
+                        input.as_mut_ptr().cast::<f32>().add(offset + 16),
+                        negated_1_0_16,
+                    );
+                };
+                (4) => {
+                    do_loop!(2);
+                    offset += 32;
+                    do_loop!(2);
+                };
+                (8) => {
+                    do_loop!(4);
+                    offset += 32;
+                    do_loop!(4);
+                };
+                (16) => {
+                    do_loop!(8);
+                    offset += 32;
+                    do_loop!(8);
+                };
+            }
+
+            debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+
+            do_loop!(16);
+        }
+    }
+
+    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            let neg = _mm512_set1_ps(-1.0);
+            let mut offset = if NEGATE { 0 } else { 16 };
+            macro_rules! do_loop {
+                (2) => {
+                    let row_0_0_16 = _mm512_loadu_ps(input.as_ptr().cast::<f32>().add(offset));
+                    let negated_0_0_16 = _mm512_mul_ps(row_0_0_16, neg);
+                    _mm512_storeu_ps(input.as_mut_ptr().cast::<f32>().add(offset), negated_0_0_16);
+                };
+                (4) => {
+                    do_loop!(2);
+                    offset += 32;
+                    do_loop!(2);
+                };
+                (8) => {
+                    do_loop!(4);
+                    offset += 32;
+                    do_loop!(4);
+                };
+                (16) => {
+                    do_loop!(8);
+                    offset += 32;
+                    do_loop!(8);
+                };
+            }
+
+            do_loop!(16);
+        }
+    }
+
+    fn pdqf_negate_alt_cols<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            let coefficients = if NEGATE {
+                _mm512_setr_ps(
+                    1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0,
+                    1.0, -1.0,
+                )
+            } else {
+                _mm512_setr_ps(
+                    -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0,
+                    -1.0, 1.0,
+                )
+            };
+
+            let mut offset = 0;
+            macro_rules! do_loop {
+                (1) => {
+                    let row_0_0_16 = _mm512_loadu_ps(input.as_ptr().cast::<f32>().add(offset));
+                    let negated_0_0_16 = _mm512_mul_ps(row_0_0_16, coefficients);
+                    _mm512_storeu_ps(input.as_mut_ptr().cast::<f32>().add(offset), negated_0_0_16);
+                };
+                (2) => {
+                    do_loop!(1);
+                    offset += 16;
+                    do_loop!(1);
+                };
+                (4) => {
+                    do_loop!(2);
+                    offset += 16;
+                    do_loop!(2);
+                };
+                (8) => {
+                    do_loop!(4);
+                    offset += 16;
+                    do_loop!(4);
+                };
+                (16) => {
+                    do_loop!(8);
+                    offset += 16;
+                    do_loop!(8);
+                };
+            }
+
+            debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+
+            do_loop!(16);
+        }
     }
 
     fn jarosz_compress(
@@ -1150,7 +1439,7 @@ mod tests {
         let blue_expect = constants::RGB8_TO_LUMA8_TABLE_ITU[2] as f32 * 255.0;
         let white_expect = 255.0;
 
-        Avx2F32Kernel.cvt_rgba8_to_luma8f::<
+        cvt_rgba8_to_luma8f_avx2::<
             { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[0].to_ne_bytes()) },
             { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[1].to_ne_bytes()) },
             { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[2].to_ne_bytes()) },

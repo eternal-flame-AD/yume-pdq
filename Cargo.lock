@@ -1305,12 +1305,14 @@ dependencies = [
  "criterion",
  "generic-array",
  "image 0.25.5",
+ "js-sys",
  "num-traits",
  "opencv",
  "pdqhash",
  "rand",
  "rayon",
  "rug",
+ "wasm-bindgen",
 ]
 
 [[package]]

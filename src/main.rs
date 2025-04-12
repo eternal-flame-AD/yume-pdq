@@ -32,7 +32,7 @@ use std::{
 use generic_array::{
     ArrayLength,
     sequence::{Flatten, GenericSequence},
-    typenum::{B1, U3, U4, Unsigned},
+    typenum::{B1, U3, U4, U16, Unsigned},
 };
 #[allow(unused_imports)]
 use yume_pdq::{
@@ -189,6 +189,13 @@ Usage examples with common tools:
                         .long_help("Input format. Use 'luma8' for grayscale images, 'rgb8' for RGB images, or 'rgba8' for RGBA images."),
                 )
                 .arg(
+                    Arg::new("dihedrals")
+                        .long("dihedrals")
+                        .help("Output all 8 dihedrals")
+                        .action(ArgAction::SetTrue)
+                        .long_help("Output all 8 dihedrals, by default only the original PDQ hash is output."),
+                )
+                .arg(
                     Arg::new("output")
                         .short('o')
                         .long("output")
@@ -288,6 +295,13 @@ Usage examples with common tools:
                     "Run a formal benchmark using Criterion.rs using an internal synthetic image source.",
                 )
                 .arg(
+                    Arg::new("dihedrals")
+                        .long("dihedrals")
+                        .help("Output all 8 dihedrals")
+                        .action(ArgAction::SetTrue)
+                        .long_help("Output all 8 dihedrals (i.e. 9 hashes per image), by default only the original PDQ hash is output."),
+                )
+                .arg(
                     Arg::new("core0")
                         .long("core0")
                         .help("Core ID to run the benchmark on")
@@ -340,6 +354,7 @@ const OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY: u8 = 4;
 const OUTPUT_TYPE_ASCII_HEX_UPPER_PREFIX_QUALITY: u8 =
     OUTPUT_FLAG_UPPER | OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY;
 const OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY: u8 = 5;
+const OUTPUT_TYPE_DIAGNOSTIC: u8 = 6;
 
 #[repr(C)]
 struct PairBuffer<K: Kernel>
@@ -372,7 +387,7 @@ where
 }
 
 struct PairProcessor<
-    K: Kernel + Send + Sync,
+    K: Kernel<InternalFloat = f32, OutputDimension = U16> + Send + Sync,
     R: Read + Send + Sync,
     W: Write + Send + Sync,
     const INPUT_FORMAT: u8,
@@ -387,7 +402,7 @@ struct PairProcessor<
 }
 
 impl<
-    K: Kernel + Send + Sync,
+    K: Kernel<InternalFloat = f32, OutputDimension = U16> + Send + Sync,
     R: Read + Send + Sync,
     W: Write + Send + Sync,
     const INPUT_FORMAT: u8,
@@ -430,7 +445,11 @@ where
     /// Loop for one of the threads.
     ///
     /// One thread must start with i_am_reading = true, and the other with i_am_reading = false.
-    pub unsafe fn loop_thread<const I_AM_READING_INITIALLY: bool, const STATS: bool>(
+    pub unsafe fn loop_thread<
+        const I_AM_READING_INITIALLY: bool,
+        const ALL_DIHEDRALS: bool,
+        const STATS: bool,
+    >(
         &self,
         mut kernel: K,
         separator: &'static [u8],
@@ -595,7 +614,7 @@ where
                 unsafe {
                     let mut threshold = Default::default();
 
-                    let quality = if I_AM_READING_INITIALLY {
+                    let mut quality = if I_AM_READING_INITIALLY {
                         yume_pdq::hash_get_threshold(
                             &mut kernel,
                             &self.buffers.buf1_input.0,
@@ -640,79 +659,162 @@ where
                                 .unwrap(),
                         )
                     };
-
                     let writer_mut = addr_of!(self.writer).cast_mut().as_mut().unwrap();
-                    let output_ref: &GenericArray<GenericArray<u8, _>, K::OutputDimension> =
-                        if I_AM_READING_INITIALLY {
-                            &self.buffers.buf1_output
-                        } else {
-                            &self.buffers.buf2_output
-                        };
-                    let output_flattened: &GenericArray<u8, _> = Flatten::flatten(output_ref);
+
+                    let mut output_index = 0;
+
+                    macro_rules! output_codegen {
+                        ($name:expr, $threshold:expr) => {
+                            let pdqf_ref = if I_AM_READING_INITIALLY {
+                                &self.buffers.buf1_pdqf
+                            } else {
+                                &self.buffers.buf2_pdqf
+                            };
+                            let output_ref: &GenericArray<GenericArray<u8, _>, K::OutputDimension> =
+                                if I_AM_READING_INITIALLY {
+                                    &self.buffers.buf1_output
+                                } else {
+                                    &self.buffers.buf2_output
+                                };
+                            let output_flattened: &GenericArray<u8, _> = Flatten::flatten(output_ref);
+
+                            match OUTPUT_TYPE {
+                                OUTPUT_TYPE_RAW => {
+                                    writer_mut.write_all(output_flattened.as_slice())?;
+                                }
+                                OUTPUT_TYPE_RAW_PREFIX_QUALITY => {
+                                    writer_mut.write_all(&quality.to_le_bytes())?;
+                                    writer_mut.write_all(output_flattened.as_slice())?;
+                                }
+                                OUTPUT_TYPE_ASCII_HEX | OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY => {
+                                    if OUTPUT_TYPE == OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY {
+                                        write!(writer_mut, "{0:02.3}:", quality * 100.0)?;
+                                    }
+
+                                    let mut buf: GenericArray<
+                                        u8,
+                                        <<K::OutputDimension as SquareOf>::Output as Div<U4>>::Output,
+                                    > = GenericArray::generate(|_| b'0');
+                                    buf.iter_mut()
+                                        .zip(
+                                            output_flattened
+                                                .iter()
+                                                .flat_map(|x| [(x >> 4) as u8, x & 0x0f as u8]),
+                                        )
+                                        .for_each(|(a, b): (&mut u8, u8)| {
+                                            *a += b;
+                                            if b >= 10 {
+                                                const OFFSET_UPPER: u8 = b'A' - (b'9' + 1);
+                                                const OFFSET_LOWER: u8 = b'a' - (b'9' + 1);
+                                                *a += if OUTPUT_TYPE & OUTPUT_FLAG_UPPER != 0 {
+                                                    OFFSET_UPPER
+                                                } else {
+                                                    OFFSET_LOWER
+                                                };
+                                            }
+                                        });
+
+                                    writer_mut.write_all(buf.as_slice())?;
+                                }
+                                OUTPUT_TYPE_ASCII_BINARY | OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY => {
+                                    if OUTPUT_TYPE == OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY {
+                                        write!(writer_mut, "{0:02.3}:", quality * 100.0)?;
+                                    }
+
+                                    for i in 0..K::OutputDimension::USIZE {
+                                        let data_iter =
+                                            (0..(K::OutputDimension::USIZE / 8)).flat_map(|j| {
+                                                lut_utils::BINARY_PRINTING[output_ref[i][j] as usize]
+                                            });
+
+                                        let row_buf: GenericArray<u8, K::OutputDimension> =
+                                            GenericArray::from_iter(data_iter);
+
+                                        writer_mut.write_all(row_buf.as_slice())?;
+                                    }
+                                }
+                                OUTPUT_TYPE_DIAGNOSTIC => {
+                                    writeln!(writer_mut, "[{:?}]", $name)?;
+                                    writeln!(writer_mut, "Index: {}", output_index)?;
+                                    #[allow(unused)]
+                                    {
+                                        output_index += 1;
+                                    }
+                                    writeln!(writer_mut, "Quality: {0:02.3}", quality * 100.0)?;
+                                    writeln!(writer_mut, "Threshold: {0:.7}", $threshold)?;
+                                    writeln!(writer_mut, "Hash:")?;
+                                    for i in 0..K::OutputDimension::USIZE {
+                                        let data_iter =
+                                            (0..(K::OutputDimension::USIZE / 8)).flat_map(|j| {
+                                                lut_utils::BINARY_PRINTING[output_ref[i][j] as usize]
+                                            });
+
+                                        let row_buf: GenericArray<u8, K::OutputDimension> =
+                                            GenericArray::from_iter(data_iter);
+
+                                        writer_mut.write_all(row_buf.as_slice())?;
+                                    }
+                                    writeln!(writer_mut)?;
+                                    writeln!(writer_mut, "PDQF:")?;
+                                    for i in 0..K::OutputDimension::USIZE {
+                                        for j in 0..K::OutputDimension::USIZE {
+                                            write!(writer_mut, "{}{}{:.5}",
+                                                if j > 0 { "\t" } else { "" },
+                                                if pdqf_ref[i][j] > threshold { "*" } else { "" },
+                                                pdqf_ref[i][j]
+                                            )?;
+                                        }
+                                        writeln!(writer_mut)?;
+                                    }
+                                }
+                                _ => unreachable!(),
+                            }
+
+                            if !separator.is_empty() {
+                                writer_mut.write_all(separator)?;
+                            }
+                        }
+                    }
 
                     // we are about to cause side effects, so we have to synchronize (do this as late as possible)
                     self.barrier.wait();
+                    output_codegen!("original", threshold);
 
-                    match OUTPUT_TYPE {
-                        OUTPUT_TYPE_RAW => {
-                            writer_mut.write_all(output_flattened.as_slice())?;
-                        }
-                        OUTPUT_TYPE_RAW_PREFIX_QUALITY => {
-                            writer_mut.write_all(&quality.to_le_bytes())?;
-                            writer_mut.write_all(output_flattened.as_slice())?;
-                        }
-                        OUTPUT_TYPE_ASCII_HEX | OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY => {
-                            if OUTPUT_TYPE == OUTPUT_TYPE_ASCII_HEX_PREFIX_QUALITY {
-                                write!(writer_mut, "{0:02.3}:", quality * 100.0)?;
-                            }
+                    if ALL_DIHEDRALS {
+                        let pdqf_mut = if I_AM_READING_INITIALLY {
+                            addr_of!(self.buffers.buf1_pdqf)
+                                .cast_mut()
+                                .as_mut()
+                                .unwrap()
+                        } else {
+                            addr_of!(self.buffers.buf2_pdqf)
+                                .cast_mut()
+                                .as_mut()
+                                .unwrap()
+                        };
+                        let output_mut = if I_AM_READING_INITIALLY {
+                            addr_of!(self.buffers.buf1_output)
+                                .cast_mut()
+                                .as_mut()
+                                .unwrap()
+                        } else {
+                            addr_of!(self.buffers.buf2_output)
+                                .cast_mut()
+                                .as_mut()
+                                .unwrap()
+                        };
 
-                            let mut buf: GenericArray<
-                                u8,
-                                <<K::OutputDimension as SquareOf>::Output as Div<U4>>::Output,
-                            > = GenericArray::generate(|_| b'0');
-                            buf.iter_mut()
-                                .zip(
-                                    output_flattened
-                                        .iter()
-                                        .flat_map(|x| [(x >> 4) as u8, x & 0x0f as u8]),
-                                )
-                                .for_each(|(a, b): (&mut u8, u8)| {
-                                    *a += b;
-                                    if b >= 10 {
-                                        const OFFSET_UPPER: u8 = b'A' - (b'9' + 1);
-                                        const OFFSET_LOWER: u8 = b'a' - (b'9' + 1);
-                                        *a += if OUTPUT_TYPE & OUTPUT_FLAG_UPPER != 0 {
-                                            OFFSET_UPPER
-                                        } else {
-                                            OFFSET_LOWER
-                                        };
-                                    }
-                                });
-
-                            writer_mut.write_all(buf.as_slice())?;
-                        }
-                        OUTPUT_TYPE_ASCII_BINARY | OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY => {
-                            if OUTPUT_TYPE == OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY {
-                                write!(writer_mut, "{0:02.3}:", quality * 100.0)?;
-                            }
-
-                            for i in 0..K::OutputDimension::USIZE {
-                                let data_iter =
-                                    (0..(K::OutputDimension::USIZE / 8)).flat_map(|j| {
-                                        lut_utils::BINARY_PRINTING[output_ref[i][j] as usize]
-                                    });
-
-                                let row_buf: GenericArray<u8, K::OutputDimension> =
-                                    GenericArray::from_iter(data_iter);
-
-                                writer_mut.write_all(row_buf.as_slice())?;
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-
-                    if !separator.is_empty() {
-                        writer_mut.write_all(separator)?;
+                        yume_pdq::visit_dihedrals(
+                            &mut kernel,
+                            pdqf_mut,
+                            output_mut,
+                            threshold,
+                            |xform, threshold, (new_quality, _pdqf, _output)| {
+                                quality = new_quality;
+                                output_codegen!(xform, threshold);
+                                Ok::<(), std::io::Error>(())
+                            },
+                        )?;
                     }
 
                     writer_mut.flush()?;
@@ -869,7 +971,7 @@ fn main() {
                                         .stack_size(8 << 20)
                                         .name(String::from("worker0"))
                                         .spawn_scoped(s, || {
-                                            processor.loop_thread::<true, true>(
+                                            processor.loop_thread::<true, true, true>(
                                                 kernel0,
                                                 b"",
                                                 #[cfg(feature = "hpc")]
@@ -882,7 +984,7 @@ fn main() {
                                         .stack_size(8 << 20)
                                         .name(String::from("worker1"))
                                         .spawn_scoped(s, || {
-                                            processor.loop_thread::<true, true>(
+                                            processor.loop_thread::<true, true, true>(
                                                 kernel1,
                                                 b"",
                                                 #[cfg(feature = "hpc")]
@@ -993,6 +1095,7 @@ fn main() {
             let arg_core1 = sub_matches.get_one::<usize>("core1").cloned();
             let arg_stats = sub_matches.get_flag("stats");
             let mut arg_output_format = sub_matches.get_one::<String>("format").unwrap().clone();
+            let arg_dihedrals = sub_matches.get_flag("dihedrals");
             let arg_input_format = sub_matches
                 .get_one::<String>("input_format")
                 .unwrap()
@@ -1041,17 +1144,33 @@ fn main() {
                             let processor = PairProcessor::<_, _, _, $intype, $otype>::new_fast(reader, writer);
                             thread::scope(|s| {
                                 let j1 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker0")).spawn_scoped(s, || {
-                                    if arg_stats {
-                                        unsafe { processor.loop_thread::<true, true>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
+                                    if arg_dihedrals {
+                                        if arg_stats {
+                                            unsafe { processor.loop_thread::<true, true, true>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
+                                        } else {
+                                            unsafe { processor.loop_thread::<true, true, false>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
+                                        }
                                     } else {
-                                        unsafe { processor.loop_thread::<true, false>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
+                                        if arg_stats {
+                                            unsafe { processor.loop_thread::<true, false, true>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
+                                        } else {
+                                            unsafe { processor.loop_thread::<true, false, false>(kernel0, osep, #[cfg(feature = "hpc")] arg_core0) }
+                                        }
                                     }
                                 }).expect("Failed to spawn worker thread 0");
                                 let j2 = thread::Builder::new().stack_size(8 << 20).name(String::from("worker1")).spawn_scoped(s, || {
-                                    if arg_stats {
-                                        unsafe { processor.loop_thread::<false, true>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
+                                    if arg_dihedrals {
+                                        if arg_stats {
+                                            unsafe { processor.loop_thread::<false, true, true>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
+                                        } else {
+                                            unsafe { processor.loop_thread::<false, true, false>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
+                                        }
                                     } else {
-                                        unsafe { processor.loop_thread::<false, false>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
+                                        if arg_stats {
+                                            unsafe { processor.loop_thread::<false, false, true>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
+                                        } else {
+                                            unsafe { processor.loop_thread::<false, false, false>(kernel1, osep, #[cfg(feature = "hpc")] arg_core1) }
+                                        }
                                     }
                                 }).expect("Failed to spawn worker thread 1");
 
@@ -1157,6 +1276,8 @@ fn main() {
 
                                 "q+bin" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
                                 "q+BIN" => OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY,
+
+                                "diagnostic" => OUTPUT_TYPE_DIAGNOSTIC,
                             );
                         }),*
                         _ => {
@@ -1182,15 +1303,11 @@ fn main() {
             let num = RandomState::new().hash_one(0);
             let rng = SyntheticRng::seed_from_u64(num);
             // replicate the indirection on the real version
-            let reader = rng;
             let rng2 = SyntheticRng::seed_from_u64(num);
-            let reader2 = rng2;
             let rng3 = SyntheticRng::seed_from_u64(num);
-            let reader3 = rng3;
             let rng4 = SyntheticRng::seed_from_u64(num);
-            let reader4 = rng4;
             let rng5 = SyntheticRng::seed_from_u64(num);
-            let reader5 = rng5;
+            let rng6 = SyntheticRng::seed_from_u64(num);
             let mut crit = criterion::Criterion::default().without_plots();
             #[cfg_attr(not(feature = "hpc"), expect(unused))]
             let core0 = sub_matches.get_one::<usize>("core0").map(|s| *s);
@@ -1198,6 +1315,8 @@ fn main() {
             let core1 = sub_matches.get_one::<usize>("core1").map(|s| *s);
 
             let (mut pipe_rx, pipe_tx) = std::io::pipe().expect("Failed to create loopback pipe");
+            let (mut pipe_rx_dihedrals, pipe_tx_dihedrals) =
+                std::io::pipe().expect("Failed to create loopback pipe");
             let (mut pipe_rx_hex, pipe_tx_hex) =
                 std::io::pipe().expect("Failed to create loopback pipe");
             let (mut pipe_rx_bin, pipe_tx_bin) =
@@ -1208,41 +1327,47 @@ fn main() {
                 std::io::pipe().expect("Failed to create loopback pipe");
 
             let processor = PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_RAW>::new_fast(
-                reader, pipe_tx,
+                rng, pipe_tx,
             );
+
+            let processor_dihedrals =
+                PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_RAW>::new_fast(
+                    rng2,
+                    pipe_tx_dihedrals,
+                );
 
             let processor_hex =
                 PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_ASCII_HEX>::new_fast(
-                    reader2,
+                    rng3,
                     pipe_tx_hex,
                 );
 
             let processor_bin =
                 PairProcessor::<_, _, _, INPUT_FORMAT_LUMA8, OUTPUT_TYPE_ASCII_BINARY>::new_fast(
-                    reader3,
+                    rng4,
                     pipe_tx_bin,
                 );
 
             let processor_rgb =
                 PairProcessor::<_, _, _, INPUT_FORMAT_RGB8, OUTPUT_TYPE_ASCII_HEX>::new_fast(
-                    reader4,
+                    rng5,
                     pipe_tx_rgb,
                 );
 
             let processor_rgba =
                 PairProcessor::<_, _, _, INPUT_FORMAT_RGBA8, OUTPUT_TYPE_ASCII_HEX>::new_fast(
-                    reader5,
+                    rng6,
                     pipe_tx_rgba,
                 );
 
             thread::scope(|s| {
                 macro_rules! spawn_pair {
-                    ($processor:expr) => {
+                    ($processor:expr; dihedrals = $dihedrals:literal) => {
                         let kern0 = yume_pdq::kernel::smart_kernel();
                         let kern1 = yume_pdq::kernel::smart_kernel();
                         s.spawn(|| unsafe {
                             $processor
-                                .loop_thread::<true, false>(
+                                .loop_thread::<true, $dihedrals, false>(
                                     kern0,
                                     b"",
                                     #[cfg(feature = "hpc")]
@@ -1253,7 +1378,7 @@ fn main() {
 
                         s.spawn(|| unsafe {
                             $processor
-                                .loop_thread::<false, false>(
+                                .loop_thread::<false, $dihedrals, false>(
                                     kern1,
                                     b"",
                                     #[cfg(feature = "hpc")]
@@ -1262,6 +1387,9 @@ fn main() {
                                 .expect("Failed to spawn worker thread 1");
                         });
                     };
+                    ($processor:expr) => {
+                        spawn_pair!($processor; dihedrals = false);
+                    }
                 }
 
                 spawn_pair!(processor);
@@ -1269,6 +1397,7 @@ fn main() {
                 spawn_pair!(processor_bin);
                 spawn_pair!(processor_rgb);
                 spawn_pair!(processor_rgba);
+                spawn_pair!(processor_dihedrals; dihedrals = true);
 
                 let mut group = crit.benchmark_group("pdq_pingpong");
                 group.throughput(criterion::Throughput::Bytes(512 * 512));
@@ -1279,6 +1408,21 @@ fn main() {
                     b.iter(|| {
                         let mut hash: [u8; 256 / 8] = [0; 256 / 8];
                         pipe_rx.read_exact(&mut hash).unwrap();
+                        hash
+                    });
+                });
+
+                drop(group);
+
+                let mut group = crit.benchmark_group("pdq_pingpong_dihedrals");
+                group.throughput(criterion::Throughput::Bytes(512 * 512));
+                group.measurement_time(std::time::Duration::from_secs(15));
+                // make sure we drained everything already processed
+                group.warm_up_time(std::time::Duration::from_secs(10));
+                group.bench_function("hash", |b| {
+                    b.iter(|| {
+                        let mut hash: [u8; 256 / 8 * 8] = [0; 256 / 8 * 8];
+                        pipe_rx_dihedrals.read_exact(&mut hash).unwrap();
                         hash
                     });
                 });

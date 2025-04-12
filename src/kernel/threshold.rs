@@ -19,12 +19,12 @@
  * limitations under the License.
  */
 
-use core::ops::{BitAnd, Div};
-
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{IsLessOrEqual, U0, U7, U8, U32},
+    typenum::{B1, IsLessOrEqual, U32},
 };
+
+use super::type_traits::DivisibleBy8;
 
 /// Threshold the 2D array.
 ///
@@ -36,11 +36,11 @@ use generic_array::{
 /// This function is generic up to 32x32.
 pub const fn threshold_2d_f32<L: ArrayLength>(
     input: &GenericArray<GenericArray<f32, L>, L>,
-    output: &mut GenericArray<GenericArray<u8, <L as Div<U8>>::Output>, L>,
+    output: &mut GenericArray<GenericArray<u8, <L as DivisibleBy8>::Output>, L>,
     threshold: f32,
 ) where
-    L: BitAnd<U7, Output = U0> + Div<U8> + IsLessOrEqual<U32>,
-    <L as Div<U8>>::Output: ArrayLength,
+    L: DivisibleBy8 + IsLessOrEqual<U32, Output = B1>,
+    <L as DivisibleBy8>::Output: ArrayLength,
 {
     unsafe {
         let mut ptr = input.as_slice().as_ptr().cast::<f32>();

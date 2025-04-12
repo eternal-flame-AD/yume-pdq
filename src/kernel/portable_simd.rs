@@ -101,7 +101,7 @@ impl<const I: usize, const N: usize> Swizzle<N> for Pick<I, N> {
 // 32, 64, 128, 256, 512 bit registers
 supported_lane_count!(1, 2, 4, 8, 16);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 /// Identification token for the portable SIMD kernel.
 pub struct PortableSimdF32KernelIIdent<const N: usize> {
     _private: (),
@@ -222,6 +222,118 @@ where
         /*
         crate::testing::dump_image("step_by_step/compress/portable_simd/output.ppm", output);
         */
+    }
+
+    fn pdqf_negate_off_diagonals(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        let mul_for_even = SimdPS::<16>::from_array([
+            1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0,
+        ]);
+        let mul_for_odd = -mul_for_even;
+        let mut offset = 0;
+
+        macro_rules! do_loop {
+            (2) => {
+                let row_0_0_16 = SimdPS::<16>::from_array(input[offset].into_array());
+                let negated_0_0_16 = row_0_0_16 * mul_for_even;
+                let row_1_0_16 = SimdPS::<16>::from_array(input[offset + 16].into_array());
+                let negated_1_0_16 = row_1_0_16 * mul_for_odd;
+                negated_0_0_16.copy_to_slice(&mut input[offset]);
+                negated_1_0_16.copy_to_slice(&mut input[offset + 16]);
+            };
+            (4) => {
+                do_loop!(2);
+                offset += 32;
+                do_loop!(2);
+            };
+            (8) => {
+                do_loop!(4);
+                offset += 32;
+                do_loop!(4);
+            };
+            (16) => {
+                do_loop!(8);
+                offset += 32;
+                do_loop!(8);
+            };
+        }
+
+        debug_assert!(offset == 16 * 16, "final offset is not 16 * 16");
+
+        do_loop!(16);
+    }
+
+    fn pdqf_negate_alt_cols<const INVERT: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) where
+        Self::RequiredHardwareFeature:
+            super::type_traits::EvaluateHardwareFeature<EnabledStatic = generic_array::typenum::B1>,
+    {
+        let coefficients = SimdPS::<16>::from_array(if INVERT {
+            [
+                1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0,
+                -1.0,
+            ]
+        } else {
+            [
+                -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0,
+                1.0,
+            ]
+        });
+
+        for i in 0..16 {
+            let row = input[i];
+            let row = SimdPS::<16>::from_array(row.into_array());
+            let negated = row * coefficients;
+            negated.copy_to_slice(&mut input[i]);
+        }
+    }
+
+    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) where
+        Self::RequiredHardwareFeature:
+            super::type_traits::EvaluateHardwareFeature<EnabledStatic = generic_array::typenum::B1>,
+    {
+        let mut offset = if NEGATE { 0 } else { 1 };
+
+        macro_rules! do_loop {
+            (2) => {
+                let mut row_0_0_16 = SimdPS::<16>::from_array(input[offset].into_array());
+                row_0_0_16 = -row_0_0_16;
+                row_0_0_16.copy_to_slice(&mut input[offset]);
+            };
+            (4) => {
+                do_loop!(2);
+                offset += 1;
+                do_loop!(2);
+            };
+            (8) => {
+                do_loop!(4);
+                offset += 1;
+                do_loop!(4);
+            };
+            (16) => {
+                do_loop!(8);
+                offset += 1;
+                do_loop!(8);
+            };
+        }
+
+        do_loop!(16);
     }
 
     fn sum_of_gradients(

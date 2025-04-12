@@ -8,7 +8,8 @@
         "portable-simd",
         "ffi",
         "cli-bench",
-        "opencv"
+        "opencv",
+        "wasm-bindgen",
     ],
     "psi-header.config": {
         "license": "Custom"

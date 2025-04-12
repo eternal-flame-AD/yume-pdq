@@ -251,6 +251,7 @@ pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>,
 }
 
 /// The divisor for the quality adjustment offset.
+/// cbindgen:ignore
 pub const QUALITY_ADJUST_DIVISOR: usize = 180;
 
 // reference: https://raw.githubusercontent.com/facebook/ThreatExchange/main/hashing/hashing.pdf
@@ -301,7 +302,9 @@ pub trait Kernel {
         &mut self,
         input: &GenericArray<GenericArray<u8, U3>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
-    ) {
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    {
         for (input_pixel, output_pixel) in input.iter().zip(output.iter_mut()) {
             let r = input_pixel[0] as f32;
             let g = input_pixel[1] as f32;
@@ -320,7 +323,9 @@ pub trait Kernel {
         &mut self,
         input: &GenericArray<GenericArray<u8, U4>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
-    ) {
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    {
         for (input_pixel, output_pixel) in input.iter().zip(output.iter_mut()) {
             let r = input_pixel[0] as f32;
             let g = input_pixel[1] as f32;
@@ -329,6 +334,93 @@ pub trait Kernel {
                 + f32::from_ne_bytes(G_COEFF.to_ne_bytes()) * g
                 + f32::from_ne_bytes(B_COEFF.to_ne_bytes()) * b;
             *output_pixel = luma;
+        }
+    }
+
+    /// Transpose a PDQF matrix in place. Output is equivalent to PDQF(t(image)).
+    ///
+    /// A scalar implementation is provided by default.
+    fn pdqf_t(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    {
+        for i in 0..Self::OutputDimension::USIZE {
+            for j in 0..Self::OutputDimension::USIZE {
+                if i < j {
+                    (input[j][i], input[i][j]) = (input[i][j].clone(), input[j][i].clone());
+                }
+            }
+        }
+    }
+
+    /// Negate alternative columns of PDQF matrix in place. Equivalent to PDQF(flop(image)).
+    ///
+    /// NEGATE means start from odd-indices (even columns) instead, useful for continuous flipping.
+    ///
+    /// A scalar implementation is provided by default.
+    fn pdqf_negate_alt_cols<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    {
+        for i in 0..Self::OutputDimension::USIZE {
+            for j in ((if NEGATE { 1 } else { 0 })..Self::OutputDimension::USIZE).step_by(2) {
+                input[i][j] = -input[i][j].clone();
+            }
+        }
+    }
+
+    /// Negate alternative rows of PDQF matrix in place. Equivalent to PDQF(flip(image)).
+    ///
+    /// NEGATE means start from odd-indices (even rows) instead, useful for continuous flipping.
+    ///
+    /// A scalar implementation is provided by default.
+    ///
+    /// You usually should not have to override this as it is trivially vectorizable.
+    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) where
+        Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+    {
+        for i in ((if NEGATE { 1 } else { 0 })..Self::OutputDimension::USIZE).step_by(2) {
+            for j in 0..Self::OutputDimension::USIZE {
+                input[i][j] = -input[i][j].clone();
+            }
+        }
+    }
+
+    /// Negate off-diagonals of PDQF matrix in place. Equivalent to PDQF(rotate180(image)).
+    ///
+    /// If you need the intermediate result,
+    /// it is usually less efficient than just doing [`Self::pdqf_negate_alt_cols`] and [`Self::pdqf_negate_alt_rows_invert`] in sequence.
+    ///
+    /// A scalar implementation is provided by default.
+    fn pdqf_negate_off_diagonals(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        for i in 0..Self::OutputDimension::USIZE {
+            for j in 0..Self::OutputDimension::USIZE {
+                if j.wrapping_sub(i) % 2 == 1 {
+                    input[i][j] = -input[i][j].clone();
+                }
+            }
         }
     }
 
@@ -354,12 +446,6 @@ pub trait Kernel {
         Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
 
     /// Convert input to binary by thresholding at median
-    ///
-    /// # Parameters
-    ///
-    /// * `input`: The input buffer.
-    /// * `threshold`: The threshold value.
-    /// * `output`: The output buffer.
     fn quantize(
         &mut self,
         _input: &GenericArray<

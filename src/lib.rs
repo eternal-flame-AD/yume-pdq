@@ -30,12 +30,13 @@ pub use num_traits;
 
 use kernel::{
     Kernel,
+    threshold::threshold_2d_f32,
     type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
 };
 
 use generic_array::{
     ArrayLength,
-    typenum::{B1, U16},
+    typenum::{B1, IsLessOrEqual, U16, U32},
 };
 
 /// PDQ compression kernel
@@ -50,40 +51,180 @@ pub mod alignment;
 #[cfg(any(test, all(feature = "unstable", feature = "std")))]
 pub mod testing;
 
+#[cfg(feature = "wasm-bindgen")]
+/// WASM bindings.
+/// cbindgen:ignore
+pub mod wasm;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+/// A packed representation of a matrix for dihedral transformations.
+pub struct Dihedrals {
+    /// The packed representation of the dihedral matrix.
+    ///
+    /// Ordering is first x-to-x, then x-to-y, then y-to-x, then y-to-y. Big-endian signed 8-bit integers packed into a u32.
+    pub packed: u32,
+}
+
+impl Dihedrals {
+    /// Create a new dihedral from a tuple of tuples.
+    pub const fn from_tuples(dx: (i8, i8), dy: (i8, i8)) -> Self {
+        Self {
+            packed: ((dx.0 as u32) << 24)
+                | ((dx.1 as u32) << 16)
+                | ((dy.0 as u32) << 8)
+                | ((dy.1 as u32) << 0),
+        }
+    }
+
+    /// Convert the dihedral to a tuple of tuples.
+    pub const fn into_tuples(self) -> ((i8, i8), (i8, i8)) {
+        let (dx0, dx1) = (self.packed >> 24 & 0xFF, self.packed >> 16 & 0xFF);
+        let (dy0, dy1) = (self.packed >> 8 & 0xFF, self.packed >> 0 & 0xFF);
+        ((dx0 as i8, dx1 as i8), (dy0 as i8, dy1 as i8))
+    }
+
+    /// The normal dihedral transformation.
+    pub const NORMAL: Self = Self::from_tuples((1, 0), (0, 1));
+    /// The flipped dihedral transformation.
+    pub const FLIPPED: Self = Self::from_tuples((1, 0), (0, -1));
+    /// The flopped dihedral transformation.
+    pub const FLOPPED: Self = Self::from_tuples((-1, 0), (0, 1));
+    /// The 180-degree rotated dihedral transformation.
+    pub const ROTATED_180: Self = Self::from_tuples((-1, 0), (0, -1));
+    /// The 90-degree rotated dihedral transformation.
+    pub const ROTATED_90: Self = Self::from_tuples((0, 1), (-1, 0));
+    /// The 270-degree rotated dihedral transformation.
+    pub const ROTATED_270: Self = Self::from_tuples((0, 1), (1, 0));
+    /// The 90-degree flopped dihedral transformation.
+    pub const ROTATED_90_FLOPPED: Self = Self::from_tuples((0, -1), (-1, 0));
+    /// The 270-degree flopped dihedral transformation.
+    pub const FLOPPED_ROTATED_270: Self = Self::from_tuples((0, -1), (1, 0));
+}
+
 #[cfg(feature = "ffi")]
 pub mod ffi {
     //! Foreign function interface binding for the PDQ hash function.
+    //!
+    //! There is no guarantee of Rust-level API compatibility in this module.
     use generic_array::{sequence::Unflatten, typenum::U32};
 
     use super::*;
     use crate::kernel::{SmartKernelConcreteType, SquareGenericArrayExt, smart_kernel_impl};
+    use core::ffi::c_void;
     use std::sync::LazyLock;
 
+    include!(concat!(env!("OUT_DIR"), "/version_ffi.rs"));
+
     const SMART_KERNEL: LazyLock<SmartKernelConcreteType> = LazyLock::new(smart_kernel_impl);
+
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_NORMAL: Dihedrals = Dihedrals::NORMAL;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_FLIPPED: Dihedrals = Dihedrals::FLIPPED;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_FLOPPED: Dihedrals = Dihedrals::FLOPPED;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_ROTATED_180: Dihedrals = Dihedrals::ROTATED_180;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_ROTATED_90: Dihedrals = Dihedrals::ROTATED_90;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_ROTATED_270: Dihedrals = Dihedrals::ROTATED_270;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_ROTATED_90_FLOPPED: Dihedrals = Dihedrals::ROTATED_90_FLOPPED;
+    /// re-exported constants for the dihedrals
+    #[unsafe(no_mangle)]
+    pub static YUME_PDQ_DIHEDRAL_FLOPPED_ROTATED_270: Dihedrals = Dihedrals::FLOPPED_ROTATED_270;
+
+    /// A callback function for visiting all dihedrals.
+    ///
+    /// The threshold, PDQF and quantized output will be available to the caller via the provided buffers ONLY before the callback returns.
+    ///
+    /// Return true to continue, false to stop.
+    ///
+    /// The function must not modify the buffers, and must copy them out before returning if they need to keep them.
+    pub type DihedralCallback =
+        extern "C" fn(ctx: *mut c_void, dihedral: u32, threshold: f32, quality: f32) -> bool;
+
+    #[unsafe(export_name = "yume_pdq_visit_dihedrals_smart_kernel")]
+    /// Visit the 7 alternative dihedrals of the PDQF hash.
+    ///
+    /// # Safety
+    ///
+    /// - `ctx` is transparently passed to the callback function.
+    /// - `threshold` must be a valid threshold value for the provided PDQF input received from [`hash_smart_kernel`].
+    /// - `output` is out only, must be a pointer to a 2x16 array of u8 to receive any intermediate 256-bit hash. It does not have to be initialized to any particular value.
+    /// - `pdqf` is in/out, must be a pointer to a 16x16 array of f32 values of the initial PDQF data, and be writable to receive derived PDQF (unquantized) hash values.
+    /// - `callback` must be a valid callback function that will be called for each dihedral.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if all dihedrals were visited, `false` if the callback returned false for any dihedral.
+    pub unsafe extern "C" fn visit_dihedrals_smart_kernel(
+        ctx: *mut c_void,
+        threshold: f32,
+        output: *mut u8,
+        pdqf: *mut f32,
+        callback: DihedralCallback,
+    ) -> bool {
+        let output = unsafe { core::mem::transmute::<*mut u8, &mut [u8; 2 * 16]>(output) };
+        let pdqf = unsafe { core::mem::transmute::<*mut f32, &mut [f32; 16 * 16]>(pdqf) };
+
+        let pdqf = GenericArray::from_mut_slice(pdqf).unflatten_square_mut();
+        let output = GenericArray::<_, U32>::from_mut_slice(output).unflatten();
+
+        crate::visit_dihedrals(
+            &mut SMART_KERNEL.clone(),
+            pdqf,
+            output,
+            threshold,
+            |dihedral, _, (quality, _pdqf, _output)| {
+                if callback(ctx, dihedral.packed, threshold, quality) {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            },
+        )
+        .is_ok()
+    }
 
     #[unsafe(export_name = "yume_pdq_hash_smart_kernel")]
     /// Compute the PDQ hash of a 512x512 single-channel image using [`kernel::smart_kernel`].
     ///
     /// # Safety
     ///
-    /// - `input` must be a pointer to a 512x512 single-channel image in float32 format, row-major order.
-    /// - `threshold` must be a valid aligned pointer to a f32 value or NULL.
-    /// - `output` must be a pointer to a 2x16 array of u8 to receive the final 256-bit hash.
-    /// - `buf1` must be a pointer to a 128x128 array of f32 values to receive the intermediate results of the DCT transform.
-    /// - `tmp` must be a pointer to a 128x1 array of f32 values as scratch space for the DCT transform.
-    /// - `pdqf` must be a pointer to a 16x16 array of f32 values to receive PDQF (unquantized) hash values.
+    /// - `input` is in only, must be a pointer to a 512x512 single-channel image in float32 format, row-major order.
+    /// - `threshold` is out only, must be a valid aligned pointer to a f32 value or NULL.
+    /// - `output` is out only, must be a pointer to a 2x16 array of u8 to receive the final 256-bit hash.
+    /// - `buf1` is in/out, must be a pointer to a 128x128 array of f32 values to receive the intermediate results of the DCT transform.
+    /// - `tmp` is in/out, must be a pointer to a 128x1 array of f32 values as scratch space for the DCT transform.
+    /// - `pdqf` is out only, must be a pointer to a 16x16 array of f32 values to receive PDQF (unquantized) hash values.
     ///
     /// # Returns
     ///
     /// The quality of the hash as a f32 value between 0.0 and 1.0. You are responsible for checking whether quality is acceptable.
     pub unsafe extern "C" fn hash_smart_kernel(
-        input: &[f32; 512 * 512],
+        input: *const f32,
         threshold: *mut f32,
-        output: &mut [u8; 2 * 16],
-        buf1: &mut [f32; 128 * 128],
-        tmp: &mut [f32; 128],
-        pdqf: &mut [f32; 16 * 16],
+        output: *mut u8,
+        buf1: *mut f32,
+        tmp: *mut f32,
+        pdqf: *mut f32,
     ) -> f32 {
+        let input = unsafe { core::mem::transmute::<*const f32, &[f32; 512 * 512]>(input) };
+        let output = unsafe { core::mem::transmute::<*mut u8, &mut [u8; 2 * 16]>(output) };
+        let buf1 = unsafe { core::mem::transmute::<*mut f32, &mut [f32; 128 * 128]>(buf1) };
+        let tmp = unsafe { core::mem::transmute::<*mut f32, &mut [f32; 128]>(tmp) };
+        let pdqf = unsafe { core::mem::transmute::<*mut f32, &mut [f32; 16 * 16]>(pdqf) };
+
         let mut kernel = SMART_KERNEL.clone();
         let input = GenericArray::from_slice(input).unflatten_square_ref();
         let output = GenericArray::<_, U32>::from_mut_slice(output).unflatten();
@@ -142,7 +283,7 @@ pub type PDQHashF<N = f32, L = U16> = GenericArray<GenericArray<N, L>, L>;
 ///
 /// // Compute the hash
 /// let quality = yume_pdq::hash(&mut kernel, &input, &mut output, &mut buf1, &mut row_tmp, &mut pdqf);
-///
+#[inline]
 pub fn hash<K: Kernel>(
     kernel: &mut K,
     input: &GenericArray<GenericArray<f32, K::InputDimension>, K::InputDimension>,
@@ -172,6 +313,77 @@ where
         tmp,
         pdqf,
     )
+}
+
+/// Visit the 7 alternative dihedrals of the PDQF hash.
+///
+/// The callback function is called with first the matrix of the dihedral, then the threshold, then the quality, then the PDQF hash and finally the output hash.
+///
+/// The PDQF hash and output hash are guaranteed to point to the same buffer as the input hash, it is just to make the borrow-checker happy.
+pub fn visit_dihedrals<
+    K: Kernel<InternalFloat = f32>,
+    E,
+    F: FnMut(
+        Dihedrals,
+        f32,
+        (
+            f32,
+            &mut PDQHashF<K::InternalFloat, K::OutputDimension>,
+            &mut PDQHash<K::OutputDimension>,
+        ),
+    ) -> Result<(), E>,
+>(
+    kernel: &mut K,
+    pdqf: &mut PDQHashF<K::InternalFloat, K::OutputDimension>,
+    output: &mut PDQHash<K::OutputDimension>,
+    threshold: K::InternalFloat,
+    mut f: F,
+) -> Result<(), E>
+where
+    K::OutputDimension: DivisibleBy8 + IsLessOrEqual<U32, Output = B1>,
+    <K as Kernel>::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>,
+{
+    macro_rules! callback {
+        ($dihedral:expr, $threshold:expr) => {
+            let gradient = kernel.sum_of_gradients(pdqf);
+            let quality = K::adjust_quality(gradient);
+            if let Err(e) = f($dihedral, $threshold, (quality, pdqf, output)) {
+                return Err(e);
+            }
+        };
+    }
+
+    let mut threshold_negate_alt_cols = threshold;
+    let mut threshold_negate_alt_rows = threshold;
+    let mut threshold_negate_off_diagonals = threshold;
+    kernel.pdqf_negate_alt_cols::<false>(pdqf); // first negate by columns
+    kernel.quantize(pdqf, &mut threshold_negate_alt_cols, output);
+    callback!(Dihedrals::FLOPPED, threshold_negate_alt_cols);
+    kernel.pdqf_negate_alt_rows::<true>(pdqf); // then negate by rows, getting the negate-by off-diagonals
+    kernel.quantize(pdqf, &mut threshold_negate_off_diagonals, output);
+    callback!(Dihedrals::ROTATED_180, threshold_negate_off_diagonals);
+    kernel.pdqf_negate_alt_cols::<false>(pdqf); // then negate by columns again, getting the negate-by alt-rows
+    kernel.quantize(pdqf, &mut threshold_negate_alt_rows, output);
+    callback!(Dihedrals::FLIPPED, threshold_negate_alt_rows);
+    // undo all negations, transpose
+    kernel.pdqf_negate_alt_rows::<true>(pdqf);
+    kernel.pdqf_t(pdqf);
+    threshold_2d_f32(pdqf, output, threshold);
+    callback!(Dihedrals::ROTATED_90_FLOPPED, threshold);
+    // now undo the original transformations to get back to the other 3 hashes that require transposition
+    kernel.pdqf_negate_alt_rows::<true>(pdqf);
+    threshold_2d_f32(pdqf, output, threshold_negate_alt_cols);
+    callback!(Dihedrals::ROTATED_270, threshold_negate_alt_cols);
+    kernel.pdqf_negate_alt_cols::<false>(pdqf);
+    threshold_2d_f32(pdqf, output, threshold_negate_off_diagonals);
+    callback!(
+        Dihedrals::FLOPPED_ROTATED_270,
+        threshold_negate_off_diagonals
+    );
+    kernel.pdqf_negate_alt_rows::<true>(pdqf);
+    threshold_2d_f32(pdqf, output, threshold_negate_alt_rows);
+    callback!(Dihedrals::ROTATED_90, threshold_negate_alt_rows);
+    Ok(())
 }
 
 /// Compute the PDQ hash of a 512x512 single-channel image using the given kernel, obtaining the threshold value useful for [`kernel::threshold::threshold_2d_f32`].

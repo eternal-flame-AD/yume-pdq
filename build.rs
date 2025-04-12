@@ -386,6 +386,45 @@ fn lerp(a: f64, b: f64, p: u32, n: u32) -> f64 {
     a + step * (p + 1) as f64
 }
 
+fn generate_version_ffi() {
+    let mut file =
+        File::create(PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("version_ffi.rs"))
+            .unwrap();
+    let version = env!("CARGO_PKG_VERSION");
+    let version_parts = version.split('.').collect::<Vec<_>>();
+    assert_eq!(
+        version_parts.len(),
+        3,
+        "version must be in the format MAJOR.MINOR.PATCH"
+    );
+    let major = version_parts[0].parse::<u32>().unwrap();
+    let minor = version_parts[1].parse::<u32>().unwrap();
+    let patch = version_parts[2].parse::<u32>().unwrap();
+    writeln!(file, "/// The major version number").unwrap();
+    writeln!(file, "#[unsafe(export_name = \"YUME_PDQ_VERSION_MAJOR\")]").unwrap();
+    writeln!(file, "pub static YUME_PDQ_VERSION_MAJOR: u32 = {};", major).unwrap();
+    writeln!(file, "/// The minor version number").unwrap();
+    writeln!(file, "#[unsafe(export_name = \"YUME_PDQ_VERSION_MINOR\")]").unwrap();
+    writeln!(file, "pub static YUME_PDQ_VERSION_MINOR: u32 = {};", minor).unwrap();
+    writeln!(file, "/// The patch version number").unwrap();
+    writeln!(file, "#[unsafe(export_name = \"YUME_PDQ_VERSION_PATCH\")]").unwrap();
+    writeln!(file, "pub static YUME_PDQ_VERSION_PATCH: u32 = {};", patch).unwrap();
+    let mut version_string = version.to_string();
+    version_string.push('\0');
+    writeln!(file, "/// The version string as null-terminated string").unwrap();
+    writeln!(file, "#[unsafe(export_name = \"YUME_PDQ_VERSION_STRING\")]").unwrap();
+    writeln!(
+        file,
+        "pub static YUME_PDQ_VERSION_STRING_NULL_TERMINATED: [u8; {}] = [",
+        version_string.len(),
+    )
+    .unwrap();
+    for c in version_string.chars() {
+        writeln!(file, "{},", c as u8).unwrap();
+    }
+    writeln!(file, "];").unwrap();
+}
+
 fn main() {
     println!("cargo:rustc-env=BUILD_CFG_TARGET_FEATURES={}", {
         let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
@@ -438,6 +477,8 @@ fn main() {
         "cargo:rustc-env=TARGET_SPECIFIC_CLI_MESSAGE={}",
         target_specific_cli_message
     );
+
+    generate_version_ffi();
 
     let mut out_dct_path = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     out_dct_path.push("dct_matrix.rs");

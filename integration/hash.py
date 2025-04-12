@@ -51,6 +51,7 @@ class PDQHasher:
 
         # allocate buffers
 
+        self.threshold = c_float(0.0)
         self.input = (c_float * (512 * 512))()
         self.buf1 = (c_float * (128 * 128))()
         self.tmp = (c_float * (128 * 1))()
@@ -69,14 +70,12 @@ class PDQHasher:
 
         conversion_done = time.time()
         
-        threshold = c_float(0.0)
-
         memmove(self.input, img_array.ctypes.data_as(POINTER(c_float)), sizeof(self.input))
 
         # Call the hash function
         quality = self.hash_smart_kernel(
             self.input,
-            byref(threshold),
+            byref(self.threshold),
             self.output,
             self.buf1,
             self.tmp,
