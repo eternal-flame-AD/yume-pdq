@@ -64,7 +64,7 @@ where
     type Output = U;
 }
 
-pub(super) mod kernel_sealing {
+pub(crate) mod kernel_sealing {
     pub trait KernelSealed {}
 }
 

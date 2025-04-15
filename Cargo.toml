@@ -1,6 +1,6 @@
 [package]
 name = "yume-pdq"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 authors = ["Yumechi <yume@yumechi.jp>"]
 keywords = ["pdq", "perceptual", "NCMEC", "similarity"]
@@ -22,6 +22,8 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"], default-features = false, optional = true }
+wgpu = { version = "25", optional = true, default-features = false, features = ["vulkan", "wgsl"] }
+pollster = { version = "0.4", optional = true }
 opencv = { version = "0.94", default-features = false, optional = true }
 const-default = "1"
 generic-array = { version = "1.2", features = ["const-default"] }
@@ -47,6 +49,19 @@ rug = "1.27"
 name = "pdq"
 harness = false
 
+[[bench]]
+name = "matcher"
+harness = false
+
+[[example]]
+name = "end_to_end"
+path = "examples/end_to_end.rs"
+
+[[example]]
+name = "vulkan"
+path = "examples/vulkan.rs"
+required-features = ["vulkan"]
+
 [profile.release]
 codegen-units = 1
 lto = true
@@ -60,6 +75,7 @@ default = ["std"]
 std = []
 avx512 = []
 ffi = ["std"]
+vulkan = ["dep:wgpu", "dep:pollster", "std"]
 reference-rug = ["std", "dep:rug"]
 unstable = []
 portable-simd = []

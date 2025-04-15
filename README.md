@@ -3,9 +3,13 @@
 [![Builds](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/yume-pdq/build.yml?branch=main&label=Builds)](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/build.yml)
 [![docs.rs](https://img.shields.io/docsrs/yume-pdq)](https://docs.rs/yume-pdq/)
 
-A hand-vectorized implementation of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) estimation algorithm (hyperparameter altered to optimize for modern CPUs) that prioritizes low latency, high throughput with statistically low upper-bound false negative rate, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only), with no-std and LLVM SafeStack+CFI hardening support.
+A hand-vectorized implementation of a hash-compatible variant of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) algorithm (hyperparameter altered to optimize for modern CPUs) that prioritizes low latency, high throughput with statistically low upper-bound false negative rate, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only), with no-std and LLVM SafeStack+CFI hardening support.
+
+It also comes with a well-optimized matching pipeline that guarantees 100% recall, bringing the total time-on-processor down to <1ms when a Consumer-grade Vulkan GPU is used for the matching stage, or ~20ms when an AVX512 CPU is used for the whole task. (Assuming a 10M vector database, larger than the current size of the NCMEC CSAM PDQ database.)
 
 [Try it on WASM now!](https://eternal-flame-ad.github.io/yume-pdq/)
+
+[See the technical & engineering notes here](TECHNICAL.md)
 
 ## Table of Contents
 
@@ -36,25 +40,9 @@ Fit into an existing image processing pipeline rather than defining our own, if 
 
 Parallelize well up to the memory bandwidth limit.
 
-Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. At present, the official docs require 10 bits when quality > 0.8 to be considered "correct" and we are currently right on the border (see [Accuracy on test set](#accuracy-on-test-set)). However the threshold for matching is 31 bits so we consider this not important for the purpose of matching. This also means you _should NOT_ submit hashes to databases using output of any optimized kernels in this library.
+Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. Our implementation achieves ~0.79ms for 10M vector matches on GPU, making it suitable for real-time applications. For detailed analysis of accuracy and performance decisions, see [TECHNICAL.md](TECHNICAL.md).
 
-Our definition of "accurate enough to match" was based on a worst-case FNR (false negative rate) computed using birthday paradox, assuming such as statistical model:
-
-  - We have an unknown "ground truth" in the DCT transformation that perfectly captures the original image (the "truth" that stays consistent across minor transformations PDQ was designed to detect)
-  - We have an official definition of "positive" images generated using a lossy DCT, to match with our, also lossy DCT.
-  - An image is a "positive" if the number of bit flips between the two lossy DCTs is less than 31 bits (per official definition).
-  - We can assume a worst-case scenario that results in a birthday paradox scenario, where:
-      1. Bits are all i.i.d. uniform variables (i.e. no parts of an hash are more malleable than others, in reality some parts of hash are much more likely to flip than others)
-      2. All bit-flips happen to make the two lossy implementations diverge (in reality this this is also subject to probability, but we assume the worst-case)
-      3. The reference implementation is perfect in that it is stable in itself against minor transformations.
-
-  This yields `(1 / 2^((31 - $worst_distance) / 2)) * 100% / $test_set_size`, which currently computes to 0.069% upper bound FNR (24 bits) for the 100 images in DISC21 test set ([logs](fnr-test/log.txt)) (by assuming all images are as "bad" as the 2 out of 100 images that yielded this difference), and 0.00076% when using a more optimistic average distance (11 bits) to estimate this. It should also be noted that PDQ is a perceptual hash and can be malleable to imperceptible transformations (such as minor warping), thus an on-average 10-bits off implementation does not translate to 1024 times higher FNR in real-world fuzzy matching.
-
-  - The main hypothesized source of difference than a faithful implementation is because of a changed size of input dimension for DCT2D transformation (we increased to 127x127 from the official 64x64 to make the loss from the compression from 512x512 lower and adapt to modern CPU architecture), which could potentially capture _more_ input information to compress into frequency domain (as DCT2D has ~4x more pixels to "sample" frequency domain information from) leading to a different numerical result, but is actually more stable on such malleable images with very sharp edges. If this hypothesis holds, the real-world FNR is likely orders-of-magnitude lower than the naive birthday paradox estimate above.
-
-  - To further reduce possibility of errors when both performance and accuracy are important, it is recommended to use yume-pdq in a "hash filter"-like configuration (i.e. increasing the threshold for a "potential match" by another 8 bits to (to 39 bits), and perform a more precise comparison if the image was flagged as a "potential match").
-
-  - One might think "24-bit" worst-case difference is a big error, however it should also be noted that apart from statistical error rates, perceptual hash have systematic errors that are likely to cause inherent Type-I and Type-II errors that are not associated with minor variations in hyperparameter tuning. These unstable bit positions are malleable in both "reference" implementations and yume-pdq, for example cropping an image by an imperceptible amount can cause [~18 bit difference](https://github.com/darwinium-com/pdqhash/blob/1a5f66f635758ee441d8884e1c15203a2ace995d/README.md#offering-similarity-resilience) using identical, reference-level officially endorsed implementations, and our "errors" are likely the same source (boundary effects), thus likely do not accumulate.
+Important: You _should NOT_ submit hashes to databases using output of any optimized (variant) kernels in this library, they are designed to be statistically compatible for matching but absolutely not for submission to a database.
 
 Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves are written with consideration to minimize possible issues by:
   -  not having data-dependent jumps or data-dependent indexing
@@ -269,6 +257,10 @@ Note:
 
 ## API Usage (and dihedral transformations)
 
+See [examples/end_to_end.rs](examples/end_to_end.rs) for an example of how to do end-to-end image matching.
+
+See [examples/vulkan.rs](examples/vulkan.rs) for an example of how to use the Vulkan backend for matching.
+
 The Rust API is fully generic over almost all possible parameters, so you don't need to remember constants or write these magic numbers in your code, you can just use type inference provided by generic_array and typenum crates.
 
 ```rust
@@ -295,6 +287,8 @@ fn main() {
     let mut kernel = smart_kernel();
 
     // Allocate output and temporary buffers
+    // warning: while they don't need to be zeroed after every use, they must be zero-initialized
+    // because junk data in the buffer padding will get picked up by some SIMD kernels and cause subtle undefined behavior
     let mut output = GenericArray::default(); // Will contain the final 256-bit hash
     let mut buf1 = GenericArray::default(); // Temporary buffer
     let mut row_tmp = GenericArray::default(); // Temporary buffer

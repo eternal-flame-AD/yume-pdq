@@ -405,7 +405,7 @@ pub trait Kernel {
     /// Negate off-diagonals of PDQF matrix in place. Equivalent to PDQF(rotate180(image)).
     ///
     /// If you need the intermediate result,
-    /// it is usually less efficient than just doing [`Self::pdqf_negate_alt_cols`] and [`Self::pdqf_negate_alt_rows_invert`] in sequence.
+    /// it is usually less efficient than just doing [`Self::pdqf_negate_alt_cols`] and [`Self::pdqf_negate_alt_rows`] inverted in sequence.
     ///
     /// A scalar implementation is provided by default.
     fn pdqf_negate_off_diagonals(

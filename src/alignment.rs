@@ -24,13 +24,95 @@ use core::ops::{Deref, DerefMut};
 use const_default::ConstDefault;
 use generic_array::{ArrayLength, GenericArray};
 
+#[repr(align(8))]
+#[derive(Debug)]
+/// Align the item to 8 bytes.
+pub struct Align8<T>(pub T);
+
+impl<T: Default> Default for Align8<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T> Deref for Align8<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Align8<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> Align8<T> {
+    /// Convert a pointer to a `Align8<T>` to a reference.
+    ///
+    /// # Safety
+    ///
+    /// The pointer was not checked to be aligned to 8 bytes, so it is the caller's responsibility to ensure it is.
+    pub const unsafe fn from_raw_unchecked(ptr: *const T) -> *const Self {
+        ptr as *const Self
+    }
+
+    /// Convert a reference to a `T` to a reference to a `Align8<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the reference is not aligned to 8 bytes.  
+    pub fn from_raw(input: &T) -> &Self {
+        let ptr = input as *const T;
+        assert_eq!(ptr.align_offset(8), 0, "pointer is not aligned to 8 bytes");
+        unsafe { &*(ptr as *const Self) }
+    }
+
+    /// Convert a pointer to a `Align8<T>` to a mutable reference.
+    ///
+    /// # Safety
+    ///
+    /// The pointer was not checked to be aligned to 8 bytes, so it is the caller's responsibility to ensure it is.
+    pub const unsafe fn from_raw_mut_unchecked(ptr: *mut T) -> *mut Self {
+        ptr as *mut Self
+    }
+
+    /// Convert a reference to a `T` to a mutable reference to a `Align8<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the reference is not aligned to 8 bytes.
+    pub fn from_raw_mut(input: &mut T) -> &mut Self {
+        let ptr = input as *mut T;
+        assert_eq!(ptr.align_offset(8), 0, "pointer is not aligned to 8 bytes");
+        unsafe { &mut *(ptr as *mut Self) }
+    }
+}
+
 #[repr(align(32))]
+#[derive(Debug)]
 /// Align the item to 32 bytes.
 pub struct Align32<T>(pub T);
 
 impl<T: Default> Default for Align32<T> {
     fn default() -> Self {
         Self(Default::default())
+    }
+}
+
+impl<T> Deref for Align32<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Align32<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -86,25 +168,12 @@ impl<T> Align32<T> {
 
 #[repr(align(64))]
 /// Align the item to 64 bytes.
+#[derive(Debug)]
 pub struct Align64<T>(pub T);
 
 impl<T: Default> Default for Align64<T> {
     fn default() -> Self {
         Self(Default::default())
-    }
-}
-
-impl<T> Deref for Align32<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for Align32<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 

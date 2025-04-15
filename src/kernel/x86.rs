@@ -112,6 +112,11 @@ define_x8664_cpuid!("avx512f", 7, 0, CPUID_REG_EBX, 16);
 /// Type alias for AVX512F feature.
 pub type CpuIdAvx512f = X8664CPUID<7, 0, CPUID_REG_EBX, 16>;
 
+define_x8664_cpuid!("avx512vpopcntdq", 7, 0, CPUID_REG_ECX, 14);
+
+/// Type alias for AVX512VPOPCNTDQ feature.
+pub type CpuIdAvx512Vpopcntdq = X8664CPUID<7, 0, CPUID_REG_ECX, 14>;
+
 /// Compute kernel using hand-written AVX2 intrinsics.
 ///
 /// Note: This would produce a slightly different numeric result than scalar implementation due to:
@@ -135,6 +140,25 @@ impl Avx2F32Kernel {
         tmp: &mut GenericArray<f32, U128>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
+        #[cfg(debug_assertions)]
+        {
+            // check the padding is zero
+            for i in 0..128 {
+                assert_eq!(
+                    buffer[i][127], 0.0,
+                    "padding in buffer is not zero (i: {}, j: 127)",
+                    i
+                );
+            }
+            for j in 0..128 {
+                assert_eq!(
+                    buffer[127][j], 0.0,
+                    "padding in buffer is not zero (i: 127, j: {})",
+                    j
+                );
+            }
+        }
+
         let mut out_buffer = Align32([0.0; 8]);
         unsafe {
             // crate::testing::dump_image("step_by_step/dct2d/avx2/input.ppm", buffer);
@@ -1060,7 +1084,7 @@ impl Kernel for Avx512F32Kernel {
             #[cfg_attr(not(debug_assertions), allow(unused))]
             let mut converged = false;
             for _iter in 0..MAX_ITER {
-                assert!(guess.is_finite(), "guess is NaN");
+                debug_assert!(guess.is_finite(), "guess is NaN");
                 let guess_v = _mm512_set1_ps(guess);
                 let mut resid_sum_lt_v = _mm512_setzero_ps();
                 let mut resid_sum_gt_v = _mm512_setzero_ps();
@@ -1212,6 +1236,23 @@ impl Kernel for Avx512F32Kernel {
         tmp: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
+        #[cfg(debug_assertions)]
+        {
+            for i in 0..128 {
+                assert_eq!(
+                    buffer[i][127], 0.0,
+                    "padding in buffer is not zero (i: {}, j: 127)",
+                    i
+                );
+            }
+            for j in 0..128 {
+                assert_eq!(
+                    buffer[127][j], 0.0,
+                    "padding in buffer is not zero (i: 127, j: {})",
+                    j
+                );
+            }
+        }
         unsafe {
             for k in 0..16 {
                 // vectorize j by 32x16 lanes, unroll inner loop by 16 w.r.t. DCT loading

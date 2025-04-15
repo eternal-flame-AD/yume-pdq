@@ -24,7 +24,7 @@ use core::{
     fmt::{Debug, Display},
     ops::BitAnd,
 };
-use std::simd::num::SimdUint;
+use std::simd::num::{SimdInt, SimdUint};
 
 use generic_array::{
     GenericArray,
@@ -468,6 +468,23 @@ where
             Self::OutputDimension,
         >,
     ) {
+        #[cfg(debug_assertions)]
+        {
+            for i in 0..128 {
+                assert_eq!(
+                    buffer[i][127], 0.0,
+                    "padding in buffer is not zero (i: {}, j: 127)",
+                    i
+                );
+            }
+            for i in 0..128 {
+                assert_eq!(
+                    buffer[i][127], 0.0,
+                    "padding in buffer is not zero (i: {}, j: 127)",
+                    i
+                );
+            }
+        }
         for k in 0..16 {
             for j_by_8 in (0..128usize).step_by(8) {
                 let mut sumks = [SimdPS::<8>::splat(0.0); 2];
@@ -658,48 +675,49 @@ where
         let mut num_over = 0; // how many elements are beyond the search max?
         let mut num_under = 0; // how many elements are below the search min?
 
-        let zeros = SimdPS::<16>::splat(0.0);
-
         // Binary search with SIMD with inter-searchspace statistics for reducing oscillations
         const MAX_ITER: usize = 32;
         #[cfg_attr(not(debug_assertions), allow(unused))]
         let mut converged = false;
         for _iter in 0..MAX_ITER {
-            assert!(guess.is_finite(), "guess is NaN");
-            let guess_v = SimdPS::<16>::splat(guess);
+            debug_assert!(
+                guess.is_finite(),
+                "guess is not finite but {:?} (iter: {})",
+                guess,
+                _iter
+            );
+            let guess_v = SimdPS::<8>::splat(guess);
             let mut gt_count = 0;
             let mut lt_count = 0;
-            let mut resid_sum_gt_v = SimdPS::<16>::splat(0.0);
-            let mut resid_sum_lt_v = SimdPS::<16>::splat(0.0);
-            let min_v = SimdPS::<16>::splat(min);
-            let max_v = SimdPS::<16>::splat(max);
+            let mut resid_sum_gt_v = SimdPS::<8>::splat(0.0);
+            let mut resid_sum_lt_v = SimdPS::<8>::splat(0.0);
+            let min_v = SimdPS::<8>::splat(min);
+            let max_v = SimdPS::<8>::splat(max);
 
             let mut output_iter_u8 = output_flattened.iter_mut().rev();
-            for chunk in input.flatten().chunks(16) {
-                let row = SimdPS::<16>::from_slice(chunk);
+            for chunk in input.flatten().chunks(8) {
+                let row = SimdPS::<8>::from_slice(chunk);
                 let cmp_gt = row.simd_gt(guess_v);
                 let mask = cmp_gt.to_bitmask();
                 *output_iter_u8.next().unwrap() = (mask & 0xFF) as u8;
-                *output_iter_u8.next().unwrap() = ((mask >> 8) & 0xFF) as u8;
 
                 let cmp_lt = row.simd_lt(guess_v);
                 let cmp_max_lt = row.simd_le(max_v);
                 let cmp_min_gt = row.simd_ge(min_v);
 
-                let cmp_lt_u8 = cmp_lt.to_bitmask();
-                let cmp_gt_u8 = cmp_gt.to_bitmask();
-                let cmp_max_lt_u8 = cmp_max_lt.to_bitmask();
-                let cmp_min_gt_u8 = cmp_min_gt.to_bitmask();
-
                 let mask_resid_gt = cmp_gt.bitand(cmp_max_lt);
                 let mask_resid_lt = cmp_lt.bitand(cmp_min_gt);
 
                 // Count elements and sum values
-                gt_count += (cmp_gt_u8 & cmp_max_lt_u8).count_ones();
-                lt_count += (cmp_lt_u8 & cmp_min_gt_u8).count_ones();
+                gt_count += mask_resid_gt.to_bitmask().count_ones();
+                lt_count += mask_resid_lt.to_bitmask().count_ones();
 
-                resid_sum_gt_v += mask_resid_gt.select(row, zeros);
-                resid_sum_lt_v += mask_resid_lt.select(row, zeros);
+                let row_bits = row.to_bits();
+                let mask_gt_bits = mask_resid_gt.to_int().cast();
+                let mask_lt_bits = mask_resid_lt.to_int().cast();
+
+                resid_sum_gt_v += SimdPS::<8>::from_bits(row_bits & mask_gt_bits);
+                resid_sum_lt_v += SimdPS::<8>::from_bits(row_bits & mask_lt_bits);
             }
 
             /*
@@ -722,18 +740,10 @@ where
             if gt_count + num_over > half_point {
                 num_under += lt_count;
                 min = guess;
-                debug_assert!(
-                    gt_count != 0,
-                    "gt_count is 0 somehow when gt_count + num_over > half_point"
-                );
                 guess = resid_sum_gt_v.reduce_sum() / gt_count as f32;
             } else if lt_count + num_under > half_point {
                 num_over += gt_count;
                 max = guess;
-                debug_assert!(
-                    lt_count != 0,
-                    "lt_count is 0 somehow when lt_count + num_under > half_point"
-                );
                 guess = resid_sum_lt_v.reduce_sum() / lt_count as f32;
             } else {
                 converged = true;

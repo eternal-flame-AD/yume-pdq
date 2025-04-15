@@ -9,6 +9,7 @@
         "ffi",
         "cli-bench",
         "opencv",
+        "vulkan",
         "wasm-bindgen",
     ],
     "psi-header.config": {

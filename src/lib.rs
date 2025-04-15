@@ -42,6 +42,14 @@ use generic_array::{
 /// PDQ compression kernel
 pub mod kernel;
 
+/// PDQ matching solution
+///
+/// Currently all solutions are exact linear-scan nearest neighbor thresholding and are expected to continue to be so.
+/// ANN will lead to significant, guaranteed false negatives (unlike my DISC21 benchmark shows 2 outliers (still well within threshold) does not mean guaranteed <98% recall).
+/// Experiment using Facebook(R) Faiss BinaryHNSW on real NEMEC PDQ data shows 90% recall with nearing 10ms per query single-threaded.
+/// Even if one can accept this recall (one shouldn't), performance is still not competitive with any optimized matcher here.
+pub mod matching;
+
 pub use kernel::smart_kernel;
 
 /// Memory alignment utilities.
@@ -261,6 +269,9 @@ pub type PDQHashF<N = f32, L = U16> = GenericArray<GenericArray<N, L>, L>;
 ///
 /// This is a convenience wrapper function and just calls [`hash_get_threshold`] with a dummy output location.
 ///
+/// **Warning**: While it may be tempting, DO NOT pass uninitialized memory into any parameter of this function.
+/// While the contents are not important, the padding must be zero-initialized otherwise subtly incorrect results will be returned.
+///
 /// # TLDR how to use this contraption
 ///
 /// ```rust,no_run
@@ -387,6 +398,9 @@ where
 }
 
 /// Compute the PDQ hash of a 512x512 single-channel image using the given kernel, obtaining the threshold value useful for [`kernel::threshold::threshold_2d_f32`].
+///
+/// **Warning**: While it may be tempting, DO NOT pass uninitialized memory into any parameter of this function.
+/// While the contents are not important, the padding must be zero-initialized otherwise subtly incorrect results will be returned.
 #[inline]
 pub fn hash_get_threshold<K: Kernel>(
     kernel: &mut K,
@@ -421,6 +435,9 @@ where
 /// Compute the PDQ hash of a 512x512 single-channel image using the given kernel without quantization.
 ///
 /// This is called PDQF in the original paper.
+///
+/// **Warning**: While it may be tempting, DO NOT pass uninitialized memory into any parameter of this function.
+/// While the contents are not important, the padding must be zero-initialized otherwise subtly incorrect results will be returned.
 ///
 pub fn hash_float<K: Kernel>(
     kernel: &mut K,
