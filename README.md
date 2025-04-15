@@ -3,7 +3,7 @@
 [![Builds](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/yume-pdq/build.yml?branch=main&label=Builds)](https://github.com/eternal-flame-AD/yume-pdq/actions/workflows/build.yml)
 [![docs.rs](https://img.shields.io/docsrs/yume-pdq)](https://docs.rs/yume-pdq/)
 
-A hand-vectorized implementation of a hash-compatible variant of the Facebook Perceptual Hash ([PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)) algorithm (hyperparameter altered to optimize for modern CPUs) that prioritizes low latency, high throughput with statistically low upper-bound false negative rate, with options of using AVX2 intrinsics, "portable-simd" (nightly only), or AVX512 intrinsics (nightly only), with no-std and LLVM SafeStack+CFI hardening support.
+Optimized kernels from hashing to vectorized or Vulkan shader-based exact matching for near real-time high-throughput high-recall [PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)-based image screening, including a hand-vectorized PDQ variant that prioritizes low latency, high throughput with high statistical compatibility, with options of using AVX2 intrinsics, portable-simd, or AVX512 intrinsics, with no-std and LLVM SafeStack+CFI hardening support.
 
 It also comes with a well-optimized matching pipeline that guarantees 100% recall, bringing the total time-on-processor down to <1ms when a Consumer-grade Vulkan GPU is used for the matching stage, or ~20ms when an AVX512 CPU is used for the whole task. (Assuming a 10M vector database, larger than the current size of the NCMEC CSAM PDQ database.)
 
