@@ -1,4 +1,5 @@
 //! this demo will show how to use the vulkan backend to match hashes in 10 million vector databases
+#![forbid(unsafe_code)]
 use generic_array::{
     GenericArray,
     sequence::Flatten,

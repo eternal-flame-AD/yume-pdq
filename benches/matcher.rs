@@ -54,7 +54,7 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             |b| {
                 b.iter(|| {
                     let mut kernel =
-                        CpuMatcher::<31>::new(unsafe { core::mem::transmute(&needles_data) });
+                        CpuMatcher::new(unsafe { core::mem::transmute(&needles_data) }, 31);
                     let mut matched = false;
                     for batch in batches.iter() {
                         matched |= kernel.scan(unsafe { core::mem::transmute(batch) });
@@ -137,7 +137,7 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             |b| {
                 b.iter(|| {
                     let mut kernel =
-                        CpuMatcher::<31>::new(unsafe { core::mem::transmute(&needles_data) });
+                        CpuMatcher::new(unsafe { core::mem::transmute(&needles_data) }, 31);
                     let mut sum = 0;
                     for batch in batches.iter() {
                         kernel.find(unsafe { core::mem::transmute(batch) }, |i, j| {

@@ -1,6 +1,7 @@
 //! this demo will demonstrate the robustness of perceptual hash matching, compatibility of yume-pdq hash with officially endorsed implementation,
 //! and a real-demo of matching a mutated and dihedrally transformed image from a synthetic database using the
 //! dihedral derivation feature of yume-pdq and the CPU matching backend.
+#![forbid(unsafe_code)]
 use generic_array::{
     GenericArray,
     sequence::Flatten,
@@ -53,11 +54,14 @@ fn main() {
     let mut database = Vec::new();
     let insertion_index = rng.random_range(0..4096);
     for chunk_index in 0..2 {
-        let mut chunk = unsafe {
-            let mut x = Box::<Align8<GenericArray<GenericArray<u8, U32>, U2048>>>::new_uninit();
-            x.assume_init_mut().flatten().fill(0);
-            x.assume_init()
-        };
+        let mut chunk = Align8::lift_boxed(
+            GenericArray::<_, U2048>::try_from_vec(vec![
+                Align8(GenericArray::<u8, U32>::default());
+                2048
+            ])
+            .unwrap(),
+        );
+
         for i in 0..2048 {
             if i + chunk_index * 2048 == insertion_index {
                 chunk[i] = GenericArray::from_array(official_hash);
@@ -91,7 +95,7 @@ fn main() {
     println!("our hash: {:02x?}", hash);
     assert_eq!(quality, 1.0);
 
-    // first do a trivial comparison
+    // first do a trivial comparison, and it obviously would match if we didn't do any alteration
     let distance = hash
         .flatten()
         .iter()
@@ -222,15 +226,6 @@ fn main() {
     );
     // in reality you should discard the hash if the quality is too low not panic
     assert!(quality > 0.8, "quality is too low");
-    yume_pdq::hash_get_threshold(
-        &mut kernel,
-        new_image,
-        &mut threshold,
-        &mut hash,
-        &mut buf1,
-        &mut GenericArray::default(),
-        &mut pdqf,
-    );
     all_dihedrals[0] = hash;
     let mut i = 1;
     yume_pdq::visit_dihedrals(
@@ -249,7 +244,7 @@ fn main() {
 
     // now we can use the matcher to find the hash, the official threshold is 31 but we use 15 here to be stricter
     let mut matcher =
-        CpuMatcher::<15>::new_nested(GenericArray::from_slice(all_dihedrals.as_slice()));
+        CpuMatcher::new_nested(GenericArray::from_slice(all_dihedrals.as_slice()), 15);
     let mut found_at = None;
     for (chunk_index, chunk) in database.iter().enumerate() {
         matcher.find(chunk, |haystack_index, needle_index| {

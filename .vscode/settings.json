@@ -8,7 +8,6 @@
         "portable-simd",
         "ffi",
         "cli-bench",
-        "opencv",
         "vulkan",
         "wasm-bindgen",
     ],

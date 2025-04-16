@@ -24,7 +24,6 @@ crate-type = ["lib", "cdylib", "staticlib"]
 criterion = { version = "0.5.1", features = ["html_reports"], default-features = false, optional = true }
 wgpu = { version = "25", optional = true, default-features = false, features = ["vulkan", "wgsl"] }
 pollster = { version = "0.4", optional = true }
-opencv = { version = "0.94", default-features = false, optional = true }
 const-default = "1"
 generic-array = { version = "1.2", features = ["const-default"] }
 num-traits = { version = "0.2", default-features = false }
@@ -56,6 +55,7 @@ harness = false
 [[example]]
 name = "end_to_end"
 path = "examples/end_to_end.rs"
+required-features = ["alloc"]
 
 [[example]]
 name = "vulkan"
@@ -72,7 +72,8 @@ lto = false
 
 [features]
 default = ["std"]
-std = []
+alloc = ["generic-array/alloc"]
+std = ["alloc"]
 avx512 = []
 ffi = ["std"]
 vulkan = ["dep:wgpu", "dep:pollster", "std"]
@@ -81,11 +82,9 @@ unstable = []
 portable-simd = []
 portable-simd-fma = ["portable-simd", "std"]
 prefer-x86-intrinsics = []
-lut-utils = []
-cli = ["std", "dep:clap", "lut-utils"]
+cli = ["std", "dep:clap"]
 cli-bench = ["cli", "dep:criterion"]
 hpc = ["std", "dep:core_affinity"]
-opencv = ["dep:opencv"]
 wasm-bindgen = ["dep:wasm-bindgen", "js-sys"]
 
 [[bin]]

@@ -43,8 +43,9 @@ use yume_pdq::{
         router::KernelRouter,
         type_traits::{DivisibleBy8, EvaluateHardwareFeature, SquareOf},
     },
-    lut_utils,
 };
+
+include!(concat!(env!("OUT_DIR"), "/lut_utils.rs"));
 
 type SyntheticRng = XorShiftRng;
 
@@ -725,7 +726,7 @@ where
                                     for i in 0..K::OutputDimension::USIZE {
                                         let data_iter =
                                             (0..(K::OutputDimension::USIZE / 8)).flat_map(|j| {
-                                                lut_utils::BINARY_PRINTING[output_ref[i][j] as usize]
+                                                BINARY_PRINTING[output_ref[i][j] as usize]
                                             });
 
                                         let row_buf: GenericArray<u8, K::OutputDimension> =
@@ -747,7 +748,7 @@ where
                                     for i in 0..K::OutputDimension::USIZE {
                                         let data_iter =
                                             (0..(K::OutputDimension::USIZE / 8)).flat_map(|j| {
-                                                lut_utils::BINARY_PRINTING[output_ref[i][j] as usize]
+                                                BINARY_PRINTING[output_ref[i][j] as usize]
                                             });
 
                                         let row_buf: GenericArray<u8, K::OutputDimension> =

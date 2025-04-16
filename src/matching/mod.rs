@@ -106,19 +106,28 @@ pub trait PDQMatcher {
 /// Expect about 250-350 million haystack vectors per second without vectorization and 600-750 million with AVX-512.
 ///
 /// It will use the AVX-512 vectorized vpopcntq if available and compile-time enabled (enable the "avx512" feature and "-C target-feature=+avx512vpopcntdq").
-pub struct CpuMatcher<const THRESHOLD: usize> {
+pub struct CpuMatcher {
     #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
     needles_comp: [__m512i; 4],
     #[cfg(not(all(feature = "avx512", target_feature = "avx512vpopcntdq")))]
     needles: GenericArray<GenericArray<u64, U4>, U8>,
+    threshold: u64,
 }
 
-impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
+impl CpuMatcher {
     #[cfg(not(all(feature = "avx512", target_feature = "avx512vpopcntdq")))]
     #[inline]
     #[must_use]
     /// Create a new CPU matcher from needles.
-    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the threshold is not in the range of [0, 256].
+    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>, threshold: u64) -> Self {
+        assert!(
+            threshold <= 256,
+            "threshold must be in the range of [0, 256]"
+        );
         Self {
             needles: unsafe {
                 needles
@@ -126,10 +135,15 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
                     .cast::<GenericArray<_, U8>>()
                     .read_unaligned()
             },
+            threshold,
         }
     }
 
     /// Create a new CPU matcher from a nested array of PDQ hashes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the threshold is not in the range of [0, 256].
     #[must_use]
     pub fn new_nested<
         T,
@@ -138,16 +152,17 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
         V: Flatten<T, N, M, Output = GenericArray<u8, U32>>,
     >(
         needles: &GenericArray<V, U8>,
+        threshold: u64,
     ) -> Self
     where
         <N as Mul<M>>::Output: ArrayLength,
     {
         #[allow(clippy::missing_transmute_annotations, clippy::transmute_ptr_to_ptr)]
         unsafe {
-            Self::new(core::mem::transmute::<
-                _,
-                &GenericArray<GenericArray<u8, U32>, U8>,
-            >(needles))
+            Self::new(
+                core::mem::transmute::<_, &GenericArray<GenericArray<u8, U32>, U8>>(needles),
+                threshold,
+            )
         }
     }
 
@@ -155,7 +170,15 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
     #[inline]
     #[must_use]
     /// Create a new CPU matcher from needles.
-    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the threshold is not in the range of [0, 256].
+    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>, threshold: u64) -> Self {
+        assert!(
+            threshold <= 256,
+            "threshold must be in the range of [0, 256]"
+        );
         use crate::alignment::Align64;
         let mut tmp = Align64::<[u64; 8]>::default();
         let ones = unsafe { _mm512_set1_epi64(!0) };
@@ -167,11 +190,14 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
             }
             _mm512_xor_si512(ones, _mm512_load_si512(tmp.as_ptr().cast()))
         });
-        Self { needles_comp: regs }
+        Self {
+            needles_comp: regs,
+            threshold,
+        }
     }
 }
 
-impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
+impl PDQMatcher for CpuMatcher {
     type BatchSize = U2048;
     #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
     type RequiredHardwareFeature = crate::kernel::x86::CpuIdAvx512Vpopcntdq;
@@ -211,10 +237,10 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
                 .iter()
                 .zip(n.iter())
                 .map(|(a, b)| a ^ b)
-                .map(|x| x.count_ones() as usize)
-                .sum::<usize>();
+                .map(|x| x.count_ones() as u64)
+                .sum::<u64>();
                 // benchmark shows it's not faster to be too smart and save a branch here
-                if dist <= THRESHOLD {
+                if dist <= self.threshold {
                     matched = true;
                 }
             }
@@ -234,7 +260,7 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
         use crate::alignment::Align64;
         unsafe {
             #[allow(clippy::cast_possible_wrap)]
-            let addend = _mm512_set1_epi64(THRESHOLD as i64);
+            let addend = _mm512_set1_epi64(self.threshold as i64);
 
             // defer the result of the match by not branching in the middle
             let mut results = _mm512_setzero_si512();
@@ -308,9 +334,9 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
                 .iter()
                 .zip(n.iter())
                 .map(|(a, b)| a ^ b)
-                .map(|x| x.count_ones() as usize)
-                .sum::<usize>();
-                if dist <= THRESHOLD {
+                .map(|x| x.count_ones() as u64)
+                .sum::<u64>();
+                if dist <= self.threshold {
                     if let Some(r) = f(i, j) {
                         return Some(r);
                     }
@@ -330,7 +356,7 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
     ) -> Option<R> {
         unsafe {
             #[allow(clippy::cast_possible_wrap)]
-            let threshold = _mm512_set1_epi64((256 - THRESHOLD) as i64);
+            let threshold = _mm512_set1_epi64((256 - self.threshold) as i64);
 
             // the needles are pre-pivot and pre-complemented, i.e:
             // [^A0|^B0|^C0|^D0|^E0|^F0|^G0|^H0]  // First 64 bits of each needle
@@ -431,7 +457,7 @@ mod tests {
         }
 
         // Compare results, initially there are no matches
-        let mut kernel = CpuMatcher::<31>::new(&needles_data);
+        let mut kernel = CpuMatcher::new(&needles_data, 31);
         assert_eq!(kernel.scan(&haystack_data), false);
 
         kernel.find(&haystack_data, |_, i| {
@@ -448,7 +474,7 @@ mod tests {
                 let pos = rng.random_range(0..2048);
                 generate_positive_control(&mut rng, &haystack_data[pos], &mut needles_data[i], 20);
 
-                let mut kernel = CpuMatcher::<31>::new(&needles_data);
+                let mut kernel = CpuMatcher::new(&needles_data, 31);
                 // Compare results again
                 assert_eq!(kernel.scan(&haystack_data), true);
 
@@ -465,7 +491,7 @@ mod tests {
         }
 
         // Compare results, make sure finally there are no matches
-        let mut kernel = CpuMatcher::<31>::new(&needles_data);
+        let mut kernel = CpuMatcher::new(&needles_data, 31);
         assert_eq!(kernel.scan(&haystack_data), false);
 
         kernel.find(&haystack_data, |_, i| {

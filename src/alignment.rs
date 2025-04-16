@@ -22,10 +22,13 @@
 use core::ops::{Deref, DerefMut};
 
 use const_default::ConstDefault;
-use generic_array::{ArrayLength, GenericArray};
+use generic_array::{
+    ArrayLength, GenericArray,
+    typenum::{B0, UInt},
+};
 
 #[repr(align(8))]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 /// Align the item to 8 bytes.
 pub struct Align8<T>(pub T);
 
@@ -46,6 +49,31 @@ impl<T> Deref for Align8<T> {
 impl<T> DerefMut for Align8<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+type Times8<T> = UInt<UInt<UInt<T, B0>, B0>, B0>;
+
+type Times32<T> = UInt<UInt<Times8<T>, B0>, B0>;
+
+type Times64<T> = UInt<Times32<T>, B0>;
+
+impl<T, L: ArrayLength> Align8<GenericArray<T, Times8<L>>> {
+    /// Convert a `GenericArray<Align8<GenericArray<T, L>>, U>` to a `Align8<GenericArray<GenericArray<T, L>, U>>`, if L is a multiple of 8.
+    pub const fn lift<U: ArrayLength>(
+        input: GenericArray<Self, U>,
+    ) -> Align8<GenericArray<GenericArray<T, Times8<L>>, U>> {
+        // SAFETY: if L is a multiple of 8, then GenericArray<T, L> is either a ZST or at least a multiple of 8 bytes, guaranteeing a zero-padding layout
+        unsafe { generic_array::const_transmute(input) }
+    }
+
+    /// Convert a `Box<GenericArray<Align8<GenericArray<T, L>>, U>>` to a `Box<Align8<GenericArray<GenericArray<T, L>, U>>>`, if L is a multiple of 8.
+    #[cfg(feature = "alloc")]
+    pub const fn lift_boxed<U: ArrayLength>(
+        input: alloc::boxed::Box<GenericArray<Self, U>>,
+    ) -> alloc::boxed::Box<Align8<GenericArray<GenericArray<T, Times8<L>>, U>>> {
+        // SAFETY: if L is a multiple of 8, then GenericArray<T, L> is either a ZST or at least a multiple of 8 bytes, guaranteeing a zero-padding layout
+        unsafe { generic_array::const_transmute(input) }
     }
 }
 
@@ -92,7 +120,7 @@ impl<T> Align8<T> {
 }
 
 #[repr(align(32))]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 /// Align the item to 32 bytes.
 pub struct Align32<T>(pub T);
 
@@ -113,6 +141,25 @@ impl<T> Deref for Align32<T> {
 impl<T> DerefMut for Align32<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<T, L: ArrayLength> Align32<GenericArray<T, Times32<L>>> {
+    /// Convert a `GenericArray<Align32<GenericArray<T, L>>, U>` to a `Align32<GenericArray<GenericArray<T, L>, U>>`, if L is a multiple of 32.
+    pub const fn lift<U: ArrayLength>(
+        input: GenericArray<Self, U>,
+    ) -> Align32<GenericArray<GenericArray<T, Times32<L>>, U>> {
+        // SAFETY: if L is a multiple of 32, then GenericArray<T, L> is either a ZST or at least a multiple of 32 bytes, guaranteeing a zero-padding layout
+        unsafe { generic_array::const_transmute(input) }
+    }
+
+    /// Convert a `Box<GenericArray<Align32<GenericArray<T, L>>, U>>` to a `Box<Align32<GenericArray<GenericArray<T, L>, U>>>`, if L is a multiple of 32.
+    #[cfg(feature = "alloc")]
+    pub const fn lift_boxed<U: ArrayLength>(
+        input: alloc::boxed::Box<GenericArray<Self, U>>,
+    ) -> alloc::boxed::Box<Align32<GenericArray<GenericArray<T, Times32<L>>, U>>> {
+        // SAFETY: if L is a multiple of 32, then GenericArray<T, L> is either a ZST or at least a multiple of 32 bytes, guaranteeing a zero-padding layout
+        unsafe { generic_array::const_transmute(input) }
     }
 }
 
@@ -168,7 +215,7 @@ impl<T> Align32<T> {
 
 #[repr(align(64))]
 /// Align the item to 64 bytes.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Align64<T>(pub T);
 
 impl<T: Default> Default for Align64<T> {
@@ -188,6 +235,25 @@ impl<T> Deref for Align64<T> {
 impl<T> DerefMut for Align64<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<T, L: ArrayLength> Align64<GenericArray<T, Times64<L>>> {
+    /// Convert a `GenericArray<Align64<GenericArray<T, L>>, U>` to a `Align64<GenericArray<GenericArray<T, L>, U>>`, if L is a multiple of 64.
+    pub const fn lift<U: ArrayLength>(
+        input: GenericArray<Self, U>,
+    ) -> Align64<GenericArray<GenericArray<T, Times64<L>>, U>> {
+        // SAFETY: if L is a multiple of 64, then GenericArray<T, L> is either a ZST or at least a multiple of 64 bytes, guaranteeing a zero-padding layout
+        unsafe { generic_array::const_transmute(input) }
+    }
+
+    /// Convert a `Box<GenericArray<Align64<GenericArray<T, L>>, U>>` to a `Box<Align64<GenericArray<GenericArray<T, L>, U>>>`, if L is a multiple of 64.
+    #[cfg(feature = "alloc")]
+    pub const fn lift_boxed<U: ArrayLength>(
+        input: alloc::boxed::Box<GenericArray<Self, U>>,
+    ) -> alloc::boxed::Box<Align64<GenericArray<GenericArray<T, Times64<L>>, U>>> {
+        // SAFETY: if L is a multiple of 64, then GenericArray<T, L> is either a ZST or at least a multiple of 64 bytes, guaranteeing a zero-padding layout
+        unsafe { generic_array::const_transmute(input) }
     }
 }
 

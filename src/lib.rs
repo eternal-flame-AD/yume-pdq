@@ -36,6 +36,9 @@
     reason = "I don't know, I think it's more readable"
 )]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub use const_default::{self, ConstDefault};
 pub use generic_array::{self, GenericArray};
 pub use num_traits;
@@ -276,12 +279,6 @@ pub mod ffi {
         )
     }
 }
-
-#[cfg(feature = "lut-utils")]
-/// Some miscellaneous lookup tables that might be helpful for downstream applications.
-///
-/// I reserve the right to remove or break API of this module in the future.
-pub mod lut_utils;
 
 /// PDQ hash type
 pub type PDQHash<L = U16> = GenericArray<GenericArray<u8, <L as DivisibleBy8>::Output>, L>;

@@ -63,21 +63,6 @@ fn bench_dct2d(c: &mut Criterion) {
         });
     });
 
-    #[cfg(feature = "opencv")]
-    group.bench_function("opencv", |b| {
-        use opencv::prelude::*;
-        let mut mat = unsafe { Mat::new_rows_cols(127, 127, opencv::core::CV_32F).unwrap() };
-        for i in 0..127 {
-            for j in 0..127 {
-                *mat.at_2d_mut::<f32>(i, j).unwrap() = rng.random_range(0.0..1.0);
-            }
-        }
-        let mut dst_mat = unsafe { Mat::new_rows_cols(127, 127, opencv::core::CV_32F).unwrap() };
-        b.iter(|| {
-            opencv::core::dct(&mat, &mut dst_mat, 0).expect("failed to compute dct");
-        });
-    });
-
     #[cfg(feature = "portable-simd")]
     group.bench_function("portable-simd", |b| {
         let mut input: GenericArray<

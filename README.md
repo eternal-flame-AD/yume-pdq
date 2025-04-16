@@ -242,12 +242,13 @@ The accuracy was done by writing unit tests that do pairwise comparison with eit
 
 Note:
 
-- higher distance to the `pdqhash` library is expected as they have mandatory preprocessing steps that cannot be slipped by the exposed API. The "reference" implementation is a more faithful pairwise comparison.
+- Ref32 uses copy pasted code from officially-endorsed `pdqhash` (see [src/kernel/ref.rs](src/kernel/ref.rs)) except generic'ed over an abstract floating point type and preprocessing steps not prescribed by the PDQ paper were stripped off, the reason some images have larger distance when using `pdqhash` is because their high level API has additional unskippable preprocessing steps (like pixel type conversion and initial resizing using a fast kernel), this difference beyond Ref32 is only indicative of the PDQ modality is inherently unstable on that particular image, instead of hash implementation differences.
 
 - Each push and tag on GitHub Actions runs this exact test suite on all Linux and MacOS builds, you can refer to the logs for that specific commit/tag to verify.
 
 - the official "10 bit is correct" threshold is based on real image test vectors, not anime or drawn images, and certainly not terminal screenshots.
   the reason you see the official test vector have much better precision is because real photos have smoother edges, and JPEG compression is also based on DCT transformation which make the frequency domain information more pronounced (see the code example below to help visualize this). However animated images and neofetch screenshots have sharp and sharper edges all throughout the image, which "blurs" the hash and creates more "ambiguous" bits.
+
 
 | Image                                          | Kernel  | Distance vs pdqhash lib | Distance vs Ref32 | Distance vs Ref96 |
 | ---------------------------------------------- | ------- | ----------------------- | ----------------- | ----------------- |
