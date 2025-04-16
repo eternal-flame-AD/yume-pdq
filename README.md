@@ -40,6 +40,8 @@ Fit into an existing image processing pipeline rather than defining our own, if 
 
 Parallelize well up to the memory bandwidth limit.
 
+Provide better than off-the-shelf solution performance across the board by fully specializing to PDQ problem dimension and unique natural batching characteristics due to the need to simultaneously check all 8 dihedral transformed hashes.
+
 All components are decoupled from each other, allowing integrator to mix and match external libraries such as using a forensic-grade hash provider but still use `yume-pdq` for high performance 100% recall matching.
 
 Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. Our implementation achieves ~0.79ms for 10M vector matches on GPU, making it suitable for real-time applications. For detailed analysis of accuracy and performance decisions, see [TECHNICAL.md](TECHNICAL.md).
@@ -68,6 +70,7 @@ No-std support.
 - The portable-simd kernel is adaptive to your platform architecture and falls back to scalar instructions if necessary, I have tested on Apple Silicon (NEON) and Google Pixel 9 Pro (SVE2), both results in 4x+ speedup over the generic auto-vectorized scalar kernel.
 - To use f32x8 AVX2 kernel, you need an x86_64 CPU with AVX2 and FMA support
 - To use f32x16 AVX512 kernel, you need an x86_64 CPU with AVX512F support
+- To use Vulkan matching backend, you need a Vulkan compute capable accelerator with at least enough memory to hold the entire vector database (~300MiB per 10 million hashes).
 
 ### Profiling
 
