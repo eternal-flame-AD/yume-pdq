@@ -87,6 +87,8 @@ We decided to not go for that route either because it is unlikely to produce a f
 
 3. **Unique Batching Characteristic**: PDQ is not dihedral invariant, thus for each image all 8 hashes must be compared against the database to ensure a correct match. This naturally penalizes the use of all data-dependent graph/tree traversal based solutions, as they would be forced to run 8 independent searches while a linear scan can match all 8 at once, furthermore with the support of vectorized instructions, 8 comparisons can be done independently in the 8 64-bit lanes of an AVX512 CPU eliminating the need for any horizontal reductions (and the reason why `yume-pdq` is faster than off-the-shelf exhaustive scan solutions like Facebook(R) Faiss IndexBinaryFlat).
 
+4. **Security Concerns**: While it is _possible_ to vectorize tree/graph traversals as well, they all involve data-dependent indexing (gather/scatter operations) which are both slow, hard on the cache and bandwidth, and are very difficult to audit due to it being an inherent "primitive" that will guarantee a large out-of-bound operation if any index get corrupted or miscalculated.
+
 ## Safety Considerations
 
 Hand-written SIMD is unsafe and we take several precautions:
