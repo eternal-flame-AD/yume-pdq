@@ -1,3 +1,6 @@
+//! this demo will demonstrate the robustness of perceptual hash matching, compatibility of yume-pdq hash with officially endorsed implementation,
+//! and a real-demo of matching a mutated and dihedrally transformed image from a synthetic database using the
+//! dihedral derivation feature of yume-pdq and the CPU matching backend.
 use generic_array::{
     GenericArray,
     sequence::Flatten,
@@ -205,7 +208,8 @@ fn main() {
     assert!(found_it, "failed to find rotated image");
 
     // now hypothetically we received that rotated, cropped, and noisy image, and we want to still match it
-    // this is what is typical of what to do for a real scenario
+    // from our synthetic database that contains the official hash on the original image
+    // this is what is typical of what to do for a real scenario and how yume-pdq helps you achieve that
     let mut threshold = 0.0;
     let quality = yume_pdq::hash_get_threshold(
         &mut kernel,

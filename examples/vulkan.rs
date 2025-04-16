@@ -1,3 +1,4 @@
+//! this demo will show how to use the vulkan backend to match hashes in 10 million vector databases
 use generic_array::{
     GenericArray,
     sequence::Flatten,
@@ -18,7 +19,6 @@ const AAA_ORIG_JPG_DATA: &[u8] = include_bytes!(concat!(
     "/test-data/aaa-orig.jpg"
 ));
 
-// this demo will show how to use the vulkan backend to match hashes in 10 million vector databases
 fn main() {
     let mut rng = SmallRng::seed_from_u64(u64::from_be_bytes(*b"yumeYUME"));
 
@@ -86,7 +86,7 @@ fn main() {
 
     let mut matchers: [VulkanMatcher<U8, U32>; 2] = core::array::from_fn(|chunk_index| {
         // we will put a lower threshold here to make the match more strict
-        VulkanMatcher::new(device.clone(), queue.clone(), &databases[chunk_index], 31)
+        VulkanMatcher::new(device.clone(), queue.clone(), &databases[chunk_index], 12)
     });
 
     let mut buf1 = Box::default();
@@ -214,5 +214,5 @@ fn main() {
         });
     }
     println!("time taken: {:?}", start.elapsed());
-    assert!(found_at.is_none(), "found hash out of random data");
+    assert!(found_at.is_none(), "found hash match out of random data");
 }

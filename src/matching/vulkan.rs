@@ -104,7 +104,6 @@ impl<'b, NumNeedles: ArrayLength> VulkanMatcher<'b, NumNeedles, U32> {
         @group(0) @binding(2)
         var<storage, read_write> matches: atomic<u32>;
         
-        // The number of bits that must match to consider a match.
         override threshold: u32 = {threshold};
         
         @compute @workgroup_size(256, 1, 1)
