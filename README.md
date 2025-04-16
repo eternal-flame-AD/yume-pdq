@@ -44,9 +44,11 @@ Provide better than off-the-shelf solution performance across the board by fully
 
 All components are decoupled from each other, allowing integrator to mix and match external libraries such as using a forensic-grade hash provider but still use `yume-pdq` for high performance 100% recall matching.
 
-Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. Our implementation achieves ~0.79ms for 10M vector matches on GPU, making it suitable for real-time applications. For detailed analysis of accuracy and performance decisions on why we chose this linear-scan based approach over ANN or metric tree based solutions, see [TECHNICAL.md](TECHNICAL.md).
+No vendor lock-in, we will never write code that only work on one vendor's hardware, which may or may not have a trade name that start with 'N'.
 
-Important: You _should NOT_ submit hashes to databases using output of any optimized (variant) kernels in this library, they are designed to be statistically compatible for matching but absolutely not for submission to a database.
+If a compromise in numerical identity must be made, be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. Our implementation achieves ~0.79ms for 10M vector matches on GPU, making it suitable for real-time applications. For detailed analysis of accuracy and performance decisions on why we chose this linear-scan based approach over ANN or metric tree based solutions, see [TECHNICAL.md](TECHNICAL.md).
+
+Important: You _should NOT_ submit hashes to databases using output of any optimized (variant) kernels in this library, they are designed to be statistically compatible for matching but absolutely not for submission to a database intended to store PDQ hashes (but okay if you have an in-house database that exclusively use `yume-pdq` hashes).
 
 Hand-written SIMD is unsafe and you shouldn't trust me, the kernel themselves are written with consideration to minimize possible issues by:
   -  not having data-dependent jumps or data-dependent indexing
