@@ -110,7 +110,7 @@ pub struct PortableSimdF32KernelIIdent<const N: usize> {
 
 impl<const N: usize> Debug for PortableSimdF32KernelIIdent<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PortableSimd<f32x{}>", N)
+        write!(f, "PortableSimd<f32x{N}>")
     }
 }
 
@@ -146,6 +146,7 @@ where
         PortableSimdF32KernelIIdent { _private: () }
     }
 
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
@@ -260,21 +261,17 @@ where
                         offset -= 1;
                     }
 
-                    #[cfg(debug_assertions)]
-                    {
-                        if offset > 512 * 512 - 8 {
-                            panic!(
-                                "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
-                                offset,
-                                512 * 512 - 8,
-                                in_i,
-                                in_j,
-                                di,
-                                outi,
-                                outj
-                            );
-                        }
-                    }
+                    debug_assert!(
+                        offset <= 512 * 512 - 8,
+                        "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
+                        offset,
+                        512 * 512 - 8,
+                        in_i,
+                        in_j,
+                        di,
+                        outi,
+                        outj
+                    );
 
                     let mut buffer = unsafe {
                         buffer
@@ -469,19 +466,18 @@ where
         >,
     ) {
         #[cfg(debug_assertions)]
+        #[allow(clippy::float_cmp)]
         {
             for i in 0..128 {
                 assert_eq!(
                     buffer[i][127], 0.0,
-                    "padding in buffer is not zero (i: {}, j: 127)",
-                    i
+                    "padding in buffer is not zero (i: {i}, j: 127)",
                 );
             }
-            for i in 0..128 {
+            for j in 0..128 {
                 assert_eq!(
-                    buffer[i][127], 0.0,
-                    "padding in buffer is not zero (i: {}, j: 127)",
-                    i
+                    buffer[127][j], 0.0,
+                    "padding in buffer is not zero (i: 127, j: {j})",
                 );
             }
         }
@@ -676,15 +672,14 @@ where
         let mut num_under = 0; // how many elements are below the search min?
 
         // Binary search with SIMD with inter-searchspace statistics for reducing oscillations
+        #[allow(clippy::items_after_statements)]
         const MAX_ITER: usize = 32;
         #[cfg_attr(not(debug_assertions), allow(unused))]
         let mut converged = false;
-        for _iter in 0..MAX_ITER {
+        for iter in 0..MAX_ITER {
             debug_assert!(
                 guess.is_finite(),
-                "guess is not finite but {:?} (iter: {})",
-                guess,
-                _iter
+                "guess is not finite but {guess:?} (iter: {iter})",
             );
             let guess_v = SimdPS::<8>::splat(guess);
             let mut gt_count = 0;
@@ -737,6 +732,7 @@ where
 
             */
 
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
             if gt_count + num_over > half_point {
                 num_under += lt_count;
                 min = guess;

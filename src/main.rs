@@ -357,6 +357,7 @@ const OUTPUT_TYPE_ASCII_BINARY_PREFIX_QUALITY: u8 = 5;
 const OUTPUT_TYPE_DIAGNOSTIC: u8 = 6;
 
 #[repr(C)]
+#[allow(clippy::type_complexity)]
 struct PairBuffer<K: Kernel>
 where
     K::OutputDimension: DivisibleBy8,
@@ -519,7 +520,7 @@ where
                                 >::default();
                                 let mut ptr = 0;
                                 while ptr < K::InputDimension::USIZE * 3 {
-                                    match reader_mut.read(&mut core::slice::from_raw_parts_mut(
+                                    match reader_mut.read(core::slice::from_raw_parts_mut(
                                         row_buf.as_mut_ptr().cast::<u8>().add(ptr),
                                         K::InputDimension::USIZE * 3 - ptr,
                                     )) {
@@ -565,7 +566,7 @@ where
                                 >::default();
                                 let mut ptr = 0;
                                 while ptr < K::InputDimension::USIZE * 4 {
-                                    match reader_mut.read(&mut core::slice::from_raw_parts_mut(
+                                    match reader_mut.read(core::slice::from_raw_parts_mut(
                                         row_buf.as_mut_ptr().cast::<u8>().add(ptr),
                                         K::InputDimension::USIZE * 4 - ptr,
                                     )) {
@@ -1081,7 +1082,7 @@ fn main() {
             let mut buf = [0; 8192];
             let mut output = std::io::BufWriter::new(std::io::stdout());
             loop {
-                rng.read(&mut buf).expect("Failed to read from stdin");
+                rng.read_exact(&mut buf).expect("Failed to read from stdin");
                 output.write_all(&buf).expect("Failed to write to stdout");
             }
         }
@@ -1101,19 +1102,22 @@ fn main() {
                 .unwrap()
                 .clone();
 
-            let osep = arg_output_format.split('+').last().and_then(|s| match s {
-                #[cfg(all(target_family = "unix", not(target_os = "macos")))]
-                "nl" | "NL" => Some(b"\n".as_slice()),
-                #[cfg(target_os = "macos")]
-                "nl" | "NL" => Some(b"\r".as_slice()),
-                #[cfg(all(not(target_family = "unix"), not(target_os = "macos")))]
-                "nl" | "NL" => Some(b"\r\n".as_slice()),
-                "lf" | "LF" => Some(b"\n".as_slice()),
-                "crlf" | "CRLF" => Some(b"\r\n".as_slice()),
-                "cr" | "CR" => Some(b"\r".as_slice()),
-                "nul" | "NUL" | "null" | "NULL" => Some(b"\0".as_slice()),
-                _ => None,
-            });
+            let osep = arg_output_format
+                .split('+')
+                .next_back()
+                .and_then(|s| match s {
+                    #[cfg(all(target_family = "unix", not(target_os = "macos")))]
+                    "nl" | "NL" => Some(b"\n".as_slice()),
+                    #[cfg(target_os = "macos")]
+                    "nl" | "NL" => Some(b"\r".as_slice()),
+                    #[cfg(all(not(target_family = "unix"), not(target_os = "macos")))]
+                    "nl" | "NL" => Some(b"\r\n".as_slice()),
+                    "lf" | "LF" => Some(b"\n".as_slice()),
+                    "crlf" | "CRLF" => Some(b"\r\n".as_slice()),
+                    "cr" | "CR" => Some(b"\r".as_slice()),
+                    "nul" | "NUL" | "null" | "NULL" => Some(b"\0".as_slice()),
+                    _ => None,
+                });
 
             if osep.is_some() {
                 let mut cuts = arg_output_format
@@ -1310,9 +1314,9 @@ fn main() {
             let rng6 = SyntheticRng::seed_from_u64(num);
             let mut crit = criterion::Criterion::default().without_plots();
             #[cfg_attr(not(feature = "hpc"), expect(unused))]
-            let core0 = sub_matches.get_one::<usize>("core0").map(|s| *s);
+            let core0 = sub_matches.get_one::<usize>("core0").copied();
             #[cfg_attr(not(feature = "hpc"), expect(unused))]
-            let core1 = sub_matches.get_one::<usize>("core1").map(|s| *s);
+            let core1 = sub_matches.get_one::<usize>("core1").copied();
 
             let (mut pipe_rx, pipe_tx) = std::io::pipe().expect("Failed to create loopback pipe");
             let (mut pipe_rx_dihedrals, pipe_tx_dihedrals) =

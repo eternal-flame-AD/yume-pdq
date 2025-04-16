@@ -56,7 +56,7 @@ impl<T> Align8<T> {
     ///
     /// The pointer was not checked to be aligned to 8 bytes, so it is the caller's responsibility to ensure it is.
     pub const unsafe fn from_raw_unchecked(ptr: *const T) -> *const Self {
-        ptr as *const Self
+        ptr.cast::<Self>()
     }
 
     /// Convert a reference to a `T` to a reference to a `Align8<T>`.
@@ -67,7 +67,7 @@ impl<T> Align8<T> {
     pub fn from_raw(input: &T) -> &Self {
         let ptr = input as *const T;
         assert_eq!(ptr.align_offset(8), 0, "pointer is not aligned to 8 bytes");
-        unsafe { &*(ptr as *const Self) }
+        unsafe { &*(ptr.cast::<Self>()) }
     }
 
     /// Convert a pointer to a `Align8<T>` to a mutable reference.
@@ -76,7 +76,7 @@ impl<T> Align8<T> {
     ///
     /// The pointer was not checked to be aligned to 8 bytes, so it is the caller's responsibility to ensure it is.
     pub const unsafe fn from_raw_mut_unchecked(ptr: *mut T) -> *mut Self {
-        ptr as *mut Self
+        ptr.cast::<Self>()
     }
 
     /// Convert a reference to a `T` to a mutable reference to a `Align8<T>`.
@@ -87,7 +87,7 @@ impl<T> Align8<T> {
     pub fn from_raw_mut(input: &mut T) -> &mut Self {
         let ptr = input as *mut T;
         assert_eq!(ptr.align_offset(8), 0, "pointer is not aligned to 8 bytes");
-        unsafe { &mut *(ptr as *mut Self) }
+        unsafe { &mut *(ptr.cast::<Self>()) }
     }
 }
 
@@ -123,7 +123,7 @@ impl<T> Align32<T> {
     ///
     /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
     pub const unsafe fn from_raw_unchecked(ptr: *const T) -> *const Self {
-        ptr as *const Self
+        ptr.cast::<Self>()
     }
 
     /// Convert a reference to a `T` to a reference to a `Align32<T>`.
@@ -138,7 +138,7 @@ impl<T> Align32<T> {
             0,
             "pointer is not aligned to 32 bytes"
         );
-        unsafe { &*(ptr as *const Self) }
+        unsafe { &*(ptr.cast::<Self>()) }
     }
 
     /// Convert a pointer to a `Align32<T>` to a mutable reference.
@@ -147,7 +147,7 @@ impl<T> Align32<T> {
     ///
     /// The pointer was not checked to be aligned to 32 bytes, so it is the caller's responsibility to ensure it is.
     pub const unsafe fn from_raw_mut_unchecked(ptr: *mut T) -> *mut Self {
-        ptr as *mut Self
+        ptr.cast::<Self>()
     }
 
     /// Convert a reference to a `T` to a mutable reference to a `Align32<T>`.
@@ -162,7 +162,7 @@ impl<T> Align32<T> {
             0,
             "pointer is not aligned to 32 bytes"
         );
-        unsafe { &mut *(ptr as *mut Self) }
+        unsafe { &mut *(ptr.cast::<Self>()) }
     }
 }
 
@@ -200,16 +200,6 @@ pub struct DefaultPaddedArray<E, L: ArrayLength, P: ArrayLength> {
 }
 
 impl<E, L: ArrayLength, P: ArrayLength> DefaultPaddedArray<E, L, P> {
-    /// Get a reference to the inner array.
-    pub fn as_ref(&self) -> &GenericArray<E, L> {
-        &self.inner
-    }
-
-    /// Get a mutable reference to the inner array.
-    pub fn as_mut(&mut self) -> &mut GenericArray<E, L> {
-        &mut self.inner
-    }
-
     /// Get a pointer to the inner array.
     pub fn as_ptr(&self) -> *const E {
         self.inner.as_ptr()
@@ -218,6 +208,22 @@ impl<E, L: ArrayLength, P: ArrayLength> DefaultPaddedArray<E, L, P> {
     /// Get a mutable pointer to the inner array.
     pub fn as_mut_ptr(&mut self) -> *mut E {
         self.inner.as_mut_ptr()
+    }
+}
+
+impl<E: ConstDefault, L: ArrayLength, P: ArrayLength> AsRef<GenericArray<E, L>>
+    for DefaultPaddedArray<E, L, P>
+{
+    fn as_ref(&self) -> &GenericArray<E, L> {
+        &self.inner
+    }
+}
+
+impl<E: ConstDefault, L: ArrayLength, P: ArrayLength> AsMut<GenericArray<E, L>>
+    for DefaultPaddedArray<E, L, P>
+{
+    fn as_mut(&mut self) -> &mut GenericArray<E, L> {
+        &mut self.inner
     }
 }
 

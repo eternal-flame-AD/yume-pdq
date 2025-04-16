@@ -23,6 +23,18 @@
 #![cfg_attr(feature = "avx512", feature(stdarch_x86_avx512))]
 #![cfg_attr(feature = "portable-simd", feature(portable_simd))]
 #![warn(missing_docs, clippy::pedantic)]
+#![allow(
+    clippy::type_complexity,
+    clippy::missing_errors_doc,
+    clippy::doc_markdown,
+    clippy::similar_names,
+    clippy::cast_lossless
+)]
+#![allow(clippy::inline_always)]
+#![allow(
+    clippy::bool_to_int_with_if,
+    reason = "I don't know, I think it's more readable"
+)]
 
 pub use const_default::{self, ConstDefault};
 pub use generic_array::{self, GenericArray};
@@ -46,7 +58,7 @@ pub mod kernel;
 ///
 /// Currently all solutions are exact linear-scan nearest neighbor thresholding and are expected to continue to be so.
 /// ANN will lead to significant, guaranteed false negatives (unlike my DISC21 benchmark shows 2 outliers (still well within threshold) does not mean guaranteed <98% recall).
-/// Experiment using Facebook(R) Faiss BinaryHNSW on real NEMEC PDQ data shows 90% recall with nearing 10ms per query single-threaded.
+/// Experiment using Facebook(R) Faiss IndexBinaryHNSW on real NEMEC PDQ data shows 90% recall with nearing 10ms per query single-threaded.
 /// Even if one can accept this recall (one shouldn't), performance is still not competitive with any optimized matcher here.
 pub mod matching;
 
@@ -76,16 +88,21 @@ pub struct Dihedrals {
 
 impl Dihedrals {
     /// Create a new dihedral from a tuple of tuples.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::identity_op,
+        clippy::cast_sign_loss
+    )]
+    #[must_use]
     pub const fn from_tuples(dx: (i8, i8), dy: (i8, i8)) -> Self {
         Self {
-            packed: (((dx.0 as u8) as u32) << 24)
-                | (((dx.1 as u8) as u32) << 16)
-                | (((dy.0 as u8) as u32) << 8)
-                | (((dy.1 as u8) as u32) << 0),
+            packed: u32::from_be_bytes([(dx.0 as u8), (dx.1 as u8), (dy.0 as u8), (dy.1 as u8)]),
         }
     }
 
     /// Convert the dihedral to a tuple of tuples.
+    #[allow(clippy::cast_possible_truncation, clippy::identity_op)]
+    #[must_use]
     pub const fn into_tuples(self) -> ((i8, i8), (i8, i8)) {
         let (dx0, dx1) = (self.packed >> 24 & 0xFF, self.packed >> 16 & 0xFF);
         let (dy0, dy1) = (self.packed >> 8 & 0xFF, self.packed >> 0 & 0xFF);
@@ -111,12 +128,14 @@ impl Dihedrals {
 }
 
 #[cfg(feature = "ffi")]
+#[allow(clippy::transmute_ptr_to_ptr, clippy::transmute_ptr_to_ref)]
 pub mod ffi {
     //! Foreign function interface binding for the PDQ hash function.
     //!
     //! There is no guarantee of Rust-level API compatibility in this module.
     use generic_array::{sequence::Unflatten, typenum::U32};
 
+    #[allow(clippy::wildcard_imports)]
     use super::*;
     use crate::kernel::{SmartKernelConcreteType, SquareGenericArrayExt, smart_kernel_impl};
     use core::ffi::c_void;
@@ -124,7 +143,7 @@ pub mod ffi {
 
     include!(concat!(env!("OUT_DIR"), "/version_ffi.rs"));
 
-    const SMART_KERNEL: LazyLock<SmartKernelConcreteType> = LazyLock::new(smart_kernel_impl);
+    static SMART_KERNEL: LazyLock<SmartKernelConcreteType> = LazyLock::new(smart_kernel_impl);
 
     /// re-exported constants for the dihedrals
     #[unsafe(no_mangle)]
@@ -172,6 +191,8 @@ pub mod ffi {
     /// - `pdqf` is in/out, must be a pointer to a 16x16 array of f32 values of the initial PDQF data, and be writable to receive derived PDQF (unquantized) hash values.
     /// - `callback` must be a valid callback function that will be called for each dihedral.
     ///
+    /// No buffer should overlap.
+    ///
     /// # Returns
     ///
     /// - `true` if all dihedrals were visited, `false` if the callback returned false for any dihedral.
@@ -216,6 +237,8 @@ pub mod ffi {
     /// - `tmp` is in/out, must be a pointer to a 128x1 array of f32 values as scratch space for the DCT transform.
     /// - `pdqf` is out only, must be a pointer to a 16x16 array of f32 values to receive PDQF (unquantized) hash values.
     ///
+    /// No buffer should overlap.
+    ///
     /// # Returns
     ///
     /// The quality of the hash as a f32 value between 0.0 and 1.0. You are responsible for checking whether quality is acceptable.
@@ -233,6 +256,7 @@ pub mod ffi {
         let tmp = unsafe { core::mem::transmute::<*mut f32, &mut [f32; 128]>(tmp) };
         let pdqf = unsafe { core::mem::transmute::<*mut f32, &mut [f32; 16 * 16]>(pdqf) };
 
+        #[allow(clippy::clone_on_copy)]
         let mut kernel = SMART_KERNEL.clone();
         let input = GenericArray::from_slice(input).unflatten_square_ref();
         let output = GenericArray::<_, U32>::from_mut_slice(output).unflatten();
@@ -243,7 +267,7 @@ pub mod ffi {
 
         crate::hash_get_threshold(
             &mut kernel,
-            &input,
+            input,
             unsafe { threshold.as_mut().unwrap_or(&mut dummy_threshold) },
             output,
             buf1,
@@ -358,9 +382,7 @@ where
         ($dihedral:expr, $threshold:expr) => {
             let gradient = kernel.sum_of_gradients(pdqf);
             let quality = K::adjust_quality(gradient);
-            if let Err(e) = f($dihedral, $threshold, (quality, pdqf, output)) {
-                return Err(e);
-            }
+            f($dihedral, $threshold, (quality, pdqf, output))?;
         };
     }
 
@@ -809,11 +831,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(
-        target_arch = "x86_64",
-        feature = "avx512",
-        all(target_feature = "avx512f")
-    ))]
+    #[cfg(all(target_arch = "x86_64", feature = "avx512", target_feature = "avx512f"))]
     fn test_hash_impl_avx512() {
         let mut kernel = kernel::x86::Avx512F32Kernel;
         test_hash_impl_lib(&mut kernel);

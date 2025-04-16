@@ -249,7 +249,7 @@ where
 
     fn pdqf_negate_alt_cols_opt<const NEGATE: bool, const CHECKED: bool>(
         &mut self,
-        _input: &mut GenericArray<
+        input: &mut GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
@@ -258,13 +258,13 @@ where
             return false;
         }
 
-        self.pdqf_negate_alt_cols::<NEGATE>(_input);
+        self.pdqf_negate_alt_cols::<NEGATE>(input);
         true
     }
 
     fn pdqf_negate_alt_rows_opt<const NEGATE: bool, const CHECKED: bool>(
         &mut self,
-        _input: &mut GenericArray<
+        input: &mut GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
@@ -273,13 +273,13 @@ where
             return false;
         }
 
-        self.pdqf_negate_alt_rows::<NEGATE>(_input);
+        self.pdqf_negate_alt_rows::<NEGATE>(input);
         true
     }
 
     fn pdqf_negate_off_diagonals_opt<const CHECKED: bool>(
         &mut self,
-        _input: &mut GenericArray<
+        input: &mut GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
@@ -288,13 +288,13 @@ where
             return false;
         }
 
-        self.pdqf_negate_off_diagonals(_input);
+        self.pdqf_negate_off_diagonals(input);
         true
     }
 
     fn pdqf_t_opt<const CHECKED: bool>(
         &mut self,
-        _input: &mut GenericArray<
+        input: &mut GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
@@ -303,7 +303,7 @@ where
             return false;
         }
 
-        self.pdqf_t(_input);
+        self.pdqf_t(input);
         true
     }
 
@@ -366,15 +366,15 @@ where
 
     fn dct2d_opt<const CHECKED: bool>(
         &mut self,
-        _buffer: &GenericArray<
+        buffer: &GenericArray<
             GenericArray<<P as Kernel>::InternalFloat, <P as Kernel>::Buffer1WidthX>,
             <P as Kernel>::Buffer1LengthY,
         >,
-        _tmp_row_buffer: &mut GenericArray<
+        tmp_row_buffer: &mut GenericArray<
             <P as Kernel>::InternalFloat,
             <P as Kernel>::Buffer1WidthX,
         >,
-        _output: &mut GenericArray<
+        output: &mut GenericArray<
             GenericArray<<P as Kernel>::InternalFloat, <P as Kernel>::OutputDimension>,
             <P as Kernel>::OutputDimension,
         >,
@@ -383,13 +383,13 @@ where
             return false;
         }
 
-        self.dct2d(_buffer, _tmp_row_buffer, _output);
+        self.dct2d(buffer, tmp_row_buffer, output);
         true
     }
 
     fn sum_of_gradients_opt<const CHECKED: bool>(
         &mut self,
-        _input: &GenericArray<
+        input: &GenericArray<
             GenericArray<<P as Kernel>::InternalFloat, <P as Kernel>::OutputDimension>,
             <P as Kernel>::OutputDimension,
         >,
@@ -398,7 +398,7 @@ where
             return None;
         }
 
-        Some(self.sum_of_gradients(_input))
+        Some(self.sum_of_gradients(input))
     }
 }
 
@@ -648,10 +648,8 @@ where
         input: &GenericArray<GenericArray<u8, U3>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.cvt_rgb8_to_luma8f_opt::<false, R_COEFF, G_COEFF, B_COEFF>(input, output) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.cvt_rgb8_to_luma8f_opt::<false, R_COEFF, G_COEFF, B_COEFF>(input, output) {
+            return;
         }
 
         self.fallback
@@ -663,10 +661,8 @@ where
         input: &GenericArray<GenericArray<u8, U4>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.cvt_rgba8_to_luma8f_opt::<false, R_COEFF, G_COEFF, B_COEFF>(input, output) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.cvt_rgba8_to_luma8f_opt::<false, R_COEFF, G_COEFF, B_COEFF>(input, output) {
+            return;
         }
 
         self.fallback
@@ -680,10 +676,8 @@ where
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.pdqf_negate_alt_cols_opt::<NEGATE, false>(input) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.pdqf_negate_alt_cols_opt::<NEGATE, false>(input) {
+            return;
         }
 
         self.fallback.pdqf_negate_alt_cols::<NEGATE>(input);
@@ -696,10 +690,8 @@ where
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.pdqf_negate_alt_rows_opt::<NEGATE, false>(input) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.pdqf_negate_alt_rows_opt::<NEGATE, false>(input) {
+            return;
         }
 
         self.fallback.pdqf_negate_alt_rows::<NEGATE>(input);
@@ -712,10 +704,8 @@ where
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.pdqf_negate_off_diagonals_opt::<false>(input) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.pdqf_negate_off_diagonals_opt::<false>(input) {
+            return;
         }
 
         self.fallback.pdqf_negate_off_diagonals(input);
@@ -728,10 +718,8 @@ where
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.pdqf_t_opt::<false>(input) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.pdqf_t_opt::<false>(input) {
+            return;
         }
 
         self.fallback.pdqf_t(input);
@@ -745,10 +733,8 @@ where
             Self::Buffer1LengthY,
         >,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self.preferred.jarosz_compress_opt::<false>(buffer, output) {
-                return;
-            }
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self.preferred.jarosz_compress_opt::<false>(buffer, output) {
+            return;
         }
 
         self.fallback.jarosz_compress(buffer, output);
@@ -756,26 +742,23 @@ where
 
     fn quantize(
         &mut self,
-        _input: &GenericArray<
+        input: &GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
-        _threshold: &mut Self::InternalFloat,
-        _output: &mut GenericArray<
+        threshold: &mut Self::InternalFloat,
+        output: &mut GenericArray<
             GenericArray<u8, <Self::OutputDimension as DivisibleBy8>::Output>,
             Self::OutputDimension,
         >,
     ) {
-        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            if self
+        if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL && self
                 .preferred
-                .quantize_opt::<false>(_input, _threshold, _output)
-            {
-                return;
-            }
+                .quantize_opt::<false>(input, threshold, output) {
+            return;
         }
 
-        self.fallback.quantize(_input, _threshold, _output);
+        self.fallback.quantize(input, threshold, output);
     }
 
     /// Compute the sum of gradients of the input buffer in both horizontal and vertical directions.
@@ -801,21 +784,21 @@ where
 
     fn dct2d(
         &mut self,
-        _buffer: &GenericArray<
+        buffer: &GenericArray<
             GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
             Self::Buffer1LengthY,
         >,
-        _tmp_row_buffer: &mut GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
-        _output: &mut GenericArray<
+        tmp_row_buffer: &mut GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+        output: &mut GenericArray<
             GenericArray<Self::InternalFloat, Self::OutputDimension>,
             Self::OutputDimension,
         >,
     ) {
         if self.materialized_decision && <<P as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::EnabledStatic::BOOL {
-            self.preferred.dct2d_opt::<false>(_buffer, _tmp_row_buffer, _output);
+            self.preferred.dct2d_opt::<false>(buffer, tmp_row_buffer, output);
             return;
         }
 
-        self.fallback.dct2d(_buffer, _tmp_row_buffer, _output);
+        self.fallback.dct2d(buffer, tmp_row_buffer, output);
     }
 }

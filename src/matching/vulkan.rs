@@ -51,10 +51,7 @@ impl<Dim: ArrayLength> VulkanVectorDatabase<Dim> {
         let init = BufferInitDescriptor {
             label,
             contents: unsafe {
-                core::slice::from_raw_parts::<u8>(
-                    data.as_ptr().cast(),
-                    data.len() * core::mem::size_of::<GenericArray<u8, Dim>>(),
-                )
+                core::slice::from_raw_parts::<u8>(data.as_ptr().cast(), std::mem::size_of_val(data))
             },
             usage: wgpu::BufferUsages::STORAGE,
         };
@@ -87,6 +84,11 @@ impl<'b, NumNeedles: ArrayLength> VulkanMatcher<'b, NumNeedles, U32> {
     /// Create a new Vulkan kernel.
     ///
     /// Your device must have [`wgpu::Features::MAPPABLE_PRIMARY_BUFFERS`] enabled.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the device does not support the required features.
+    #[must_use]
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -94,58 +96,75 @@ impl<'b, NumNeedles: ArrayLength> VulkanMatcher<'b, NumNeedles, U32> {
         threshold: u32,
     ) -> Self {
         let mut shader_code = format!(
-            r#"
-        @group(0) @binding(0)
-        var<storage, read> haystack: array<vec4<u32>>;
-        
-        @group(0) @binding(1)
-        var<uniform> needles: array<vec4<u32>, 8 * 2>;
-        
-        @group(0) @binding(2)
-        var<storage, read_write> matches: atomic<u32>;
-        
-        override threshold: u32 = {threshold};
-        
-        @compute @workgroup_size(256, 1, 1)
-        fn findThreshold(@builtin(global_invocation_id) global_id: vec3<u32>) {{
-            let linear_idx = global_id.x;
-        
-            let haystack_length = arrayLength(&haystack) / 2;
-        
-            if (linear_idx >= haystack_length) {{
-                return;
-            }}
-            var distance: vec4<u32> = vec4<u32>(0);
-        "#,
+            r"
+@group(0) @binding(0)
+var<storage, read> haystack: array<vec4<u32>>;
+
+@group(0) @binding(1)
+var<uniform> needles: array<vec4<u32>, 8 * 2>;
+
+@group(0) @binding(2)
+var<storage, read_write> matches: atomic<u32>;
+
+override threshold: u32 = {threshold};
+
+@compute @workgroup_size(256, 1, 1)
+fn findThreshold(@builtin(global_invocation_id) global_id: vec3<u32>) {{
+    let linear_idx = global_id.x;
+
+    let haystack_length = arrayLength(&haystack) / 2;
+
+    if (linear_idx >= haystack_length) {{
+        return;
+    }}
+    var distance: vec4<u32> = vec4<u32>(0);
+    ",
         );
 
         for needle_idx in 0..NumNeedles::USIZE {
             use core::fmt::Write;
             write!(
                 shader_code,
-                r#"
-                {}
-                distance += countOneBits(haystack[linear_idx * 2 + 0] ^ needles[{needle_idx} * 2 + 0]);
-                distance += countOneBits(haystack[linear_idx * 2 + 1] ^ needles[{needle_idx} * 2 + 1]);
-        
-                if (distance[0] + distance[1] + distance[2] + distance[3] <= threshold) {{
-                    let needle_idx: u32 = {needle_idx} + linear_idx * {};
-                    atomicMin(&matches, needle_idx);
-                }}
-            "#, if needle_idx == 0 {
-                ""
-            } else {
-                "distance[0] = 0; distance[1] = 0; distance[2] = 0; distance[3] = 0;"
-            }, NumNeedles::USIZE
+                r"
+{}
+distance += countOneBits(haystack[linear_idx * 2 + 0] ^ needles[{needle_idx} * 2 + 0]);
+distance += countOneBits(haystack[linear_idx * 2 + 1] ^ needles[{needle_idx} * 2 + 1]);
+
+if (distance[0] + distance[1] + distance[2] + distance[3] <= threshold) {{
+    let needle_idx: u32 = {needle_idx} + linear_idx * {};
+    atomicMin(&matches, needle_idx);
+}}
+            ",
+                if needle_idx == 0 {
+                    ""
+                } else {
+                    "distance[0] = 0; distance[1] = 0; distance[2] = 0; distance[3] = 0;"
+                },
+                NumNeedles::USIZE
             )
             .expect("Failed to write shader code");
         }
         shader_code.push('}');
 
+        #[cfg(debug_assertions)]
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Thresholding Kernel"),
+            label: Some("Thresholding Kernel (bounds checks enabled)"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(shader_code)),
         });
+
+        #[cfg(not(debug_assertions))]
+        let shader = unsafe {
+            device.create_shader_module_trusted(
+                wgpu::ShaderModuleDescriptor {
+                    label: Some("Thresholding Kernel"),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(shader_code)),
+                },
+                wgpu::ShaderRuntimeChecks {
+                    bounds_checks: false,
+                    force_loop_bounding: false,
+                },
+            )
+        };
 
         let needle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Needle Buffer"),
@@ -313,7 +332,7 @@ impl EvaluateHardwareFeature for VulkanAccelerator {
     }
 }
 
-impl<'b, NumNeedles: ArrayLength> PDQMatcher for VulkanMatcher<'b, NumNeedles, U32> {
+impl<NumNeedles: ArrayLength> PDQMatcher for VulkanMatcher<'_, NumNeedles, U32> {
     type BatchSize = U8;
     type RequiredHardwareFeature = VulkanAccelerator;
     type InputDimension = U32;
@@ -409,19 +428,20 @@ impl<'b, NumNeedles: ArrayLength> PDQMatcher for VulkanMatcher<'b, NumNeedles, U
 
         encoder.copy_buffer_to_buffer(&self.output_clear_buffer, 0, &self.output_buffer, 0, 4);
 
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: None,
-            timestamp_writes: None,
-        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
 
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups(
-            self.haystack.num_vectors.div_ceil(256).try_into().unwrap(),
-            1,
-            1,
-        );
-        drop(pass);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.dispatch_workgroups(
+                self.haystack.num_vectors.div_ceil(256).try_into().unwrap(),
+                1,
+                1,
+            );
+        }
         encoder.copy_buffer_to_buffer(&self.output_buffer, 0, &self.output_download_buffer, 0, 4);
 
         let cmd = encoder.finish();
@@ -441,13 +461,13 @@ impl<'b, NumNeedles: ArrayLength> PDQMatcher for VulkanMatcher<'b, NumNeedles, U
 
         self.output_download_buffer.unmap();
 
-        if ret != !0 {
+        if ret == !0 {
+            None
+        } else {
             f(
                 ret as usize / NumNeedles::USIZE,
                 ret as usize % NumNeedles::USIZE,
             )
-        } else {
-            None
         }
     }
 }

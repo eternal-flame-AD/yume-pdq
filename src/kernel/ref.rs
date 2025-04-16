@@ -51,6 +51,7 @@ pub fn jarosz_filter_float<
 // It should compile a version for each.
 
 #[inline(always)]
+#[allow(clippy::manual_midpoint)]
 fn box_one_d_float<
     F: num_traits::FromPrimitive
         + std::ops::Div<Output = F>

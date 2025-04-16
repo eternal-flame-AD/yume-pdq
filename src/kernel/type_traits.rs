@@ -27,7 +27,7 @@ use core::{
 
 use generic_array::{
     ArrayLength,
-    typenum::{B0, B1, Bit, U7, U9, U81, UInt},
+    typenum::{B0, B1, Bit, UInt},
 };
 use kernel_sealing::KernelSealed;
 
@@ -185,10 +185,11 @@ pub struct Term {
 
 impl KernelSealed for Term {}
 
+#[cfg(test)]
 mod tests {
     #![allow(dead_code, unused)]
 
-    use generic_array::typenum::U56;
+    use generic_array::typenum::{U7, U9, U56, U81};
 
     use super::*;
 

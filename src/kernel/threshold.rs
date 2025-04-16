@@ -34,12 +34,12 @@ use super::type_traits::DivisibleBy8;
 /// Instead this function is useful for recomputing hashes after applying dihedral flips to the DCT-II output.
 ///
 /// This function is generic up to 32x32.
-pub const fn threshold_2d_f32<L: ArrayLength>(
+pub const fn threshold_2d_f32<L>(
     input: &GenericArray<GenericArray<f32, L>, L>,
     output: &mut GenericArray<GenericArray<u8, <L as DivisibleBy8>::Output>, L>,
     threshold: f32,
 ) where
-    L: DivisibleBy8 + IsLessOrEqual<U32, Output = B1>,
+    L: ArrayLength + DivisibleBy8 + IsLessOrEqual<U32, Output = B1>,
     <L as DivisibleBy8>::Output: ArrayLength,
 {
     unsafe {

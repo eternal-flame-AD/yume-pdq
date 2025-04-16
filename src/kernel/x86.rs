@@ -19,6 +19,7 @@
  * limitations under the License.
  */
 
+#[allow(clippy::wildcard_imports)]
 use core::arch::x86_64::*;
 
 use generic_array::typenum::{IsGreaterOrEqual, U8, Unsigned};
@@ -141,20 +142,19 @@ impl Avx2F32Kernel {
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
         #[cfg(debug_assertions)]
+        #[allow(clippy::float_cmp)]
         {
             // check the padding is zero
             for i in 0..128 {
                 assert_eq!(
                     buffer[i][127], 0.0,
-                    "padding in buffer is not zero (i: {}, j: 127)",
-                    i
+                    "padding in buffer is not zero (i: {i}, j: 127)",
                 );
             }
             for j in 0..128 {
                 assert_eq!(
                     buffer[127][j], 0.0,
-                    "padding in buffer is not zero (i: 127, j: {})",
-                    j
+                    "padding in buffer is not zero (i: 127, j: {j})",
                 );
             }
         }
@@ -345,21 +345,17 @@ unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: Array
                         offset -= 1;
                     }
 
-                    #[cfg(debug_assertions)]
-                    {
-                        if offset > 512 * 512 - 8 {
-                            panic!(
-                                "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
-                                offset,
-                                512 * 512 - 8,
-                                in_i,
-                                in_j,
-                                di,
-                                outi,
-                                outj
-                            );
-                        }
-                    }
+                    debug_assert!(
+                        offset <= 512 * 512 - 8,
+                        "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
+                        offset,
+                        512 * 512 - 8,
+                        in_i,
+                        in_j,
+                        di,
+                        outi,
+                        outj
+                    );
 
                     let mut buffer = _mm256_loadu_ps(buffer.flatten().as_ptr().add(offset));
 
@@ -473,6 +469,7 @@ impl Kernel for Avx2F32Kernel {
         cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
@@ -725,6 +722,7 @@ impl Kernel for Avx2F32Kernel {
             let mut num_over = 0; // how many elements are beyond the search max?
             let mut num_under = 0; // how many elements are below the search min?
 
+            #[allow(clippy::items_after_statements)]
             const MAX_ITER: usize = 32;
             #[cfg_attr(not(debug_assertions), allow(unused))]
             let mut converged = false;
@@ -754,7 +752,10 @@ impl Kernel for Avx2F32Kernel {
                     (1) => {
                         let row = _mm256_loadu_ps(row_ptr);
                         let cmp_gt = _mm256_cmp_ps(row, guess_v, _CMP_GT_OQ);
-                        *output_ptr = _mm256_movemask_ps(cmp_gt) as u8;
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        {
+                            *output_ptr = _mm256_movemask_ps(cmp_gt) as u8;
+                        }
                         let cmp_lt = _mm256_cmp_ps(row, guess_v, _CMP_LT_OQ);
                         let cmp_max_lt = _mm256_cmp_ps(row, max_v, _CMP_LE_OQ);
                         let cmp_min_gt = _mm256_cmp_ps(row, min_v, _CMP_GE_OQ);
@@ -818,6 +819,7 @@ impl Kernel for Avx2F32Kernel {
                 );
                 */
 
+                #[allow(clippy::cast_precision_loss)]
                 if gt_count + num_over > half_point {
                     num_under += lt_count;
                     min = guess;
@@ -851,10 +853,10 @@ impl Kernel for Avx2F32Kernel {
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
-        _tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
+        tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, _tmp_row_buffer, output);
+        Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, tmp_row_buffer, output);
     }
 }
 
@@ -882,6 +884,11 @@ impl Kernel for Avx512F32Kernel {
         "avx512_f32"
     }
 
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
@@ -1080,6 +1087,7 @@ impl Kernel for Avx512F32Kernel {
             // This provides a more informed new guess that always set the next guess to be the mean of the new search space
             // and thus either guarantee elimination of at least one element,
             // or if the input is extreme, a new search space that is extremely small (floating point error territory)
+            #[allow(clippy::items_after_statements)]
             const MAX_ITER: usize = 32;
             #[cfg_attr(not(debug_assertions), allow(unused))]
             let mut converged = false;
@@ -1149,6 +1157,11 @@ impl Kernel for Avx512F32Kernel {
 
                 do_loop!(16);
 
+                #[allow(
+                    clippy::cast_precision_loss,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss
+                )]
                 if gt_count + num_over > half_point {
                     num_under += lt_count;
                     min = guess;
@@ -1237,19 +1250,18 @@ impl Kernel for Avx512F32Kernel {
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
         #[cfg(debug_assertions)]
+        #[allow(clippy::float_cmp)]
         {
             for i in 0..128 {
                 assert_eq!(
                     buffer[i][127], 0.0,
-                    "padding in buffer is not zero (i: {}, j: 127)",
-                    i
+                    "padding in buffer is not zero (i: {i}, j: 127)",
                 );
             }
             for j in 0..128 {
                 assert_eq!(
                     buffer[127][j], 0.0,
-                    "padding in buffer is not zero (i: 127, j: {})",
-                    j
+                    "padding in buffer is not zero (i: 127, j: {j})",
                 );
             }
         }

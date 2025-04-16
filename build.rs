@@ -427,12 +427,10 @@ fn generate_version_ffi() {
 
 fn main() {
     println!("cargo:rustc-env=BUILD_CFG_TARGET_FEATURES={}", {
-        let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
-        target_features
+        std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap()
     });
     println!("cargo:rustc-env=BUILD_OPT_LEVEL={}", {
-        let opt_level = std::env::var("OPT_LEVEL").unwrap();
-        opt_level
+        std::env::var("OPT_LEVEL").unwrap()
     });
 
     let target_features = std::env::var("CARGO_CFG_TARGET_FEATURE").unwrap();
@@ -592,6 +590,7 @@ fn main() {
     writeln!(
         file,
         "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_dct_matrix_rmajor_f32_{nrows}_by_{ncols}_pad_{padding}\"))] \
+        #[allow(clippy::unreadable_literal)]
         pub static DCT_MATRIX_RMAJOR: \
         crate::alignment::DefaultPaddedArray<f32, {}, {}> = \
         crate::alignment::DefaultPaddedArray::new(*::generic_array::GenericArray::from_slice(&[",
@@ -618,6 +617,7 @@ fn main() {
     writeln!(
         file,
         "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_dct_matrix_rmajor_f64_{nrows}_by_{ncols}_pad_{padding}\"))] \
+        #[allow(clippy::unreadable_literal)]
         pub static DCT_MATRIX_RMAJOR_64: \
         crate::alignment::DefaultPaddedArray<f64, {}, {}> = \
         crate::alignment::DefaultPaddedArray::new(*::generic_array::GenericArray::from_slice(&[",
@@ -694,6 +694,7 @@ fn main() {
     writeln!(
         tent_file,
         "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_tent_filter_weights_{effective_rows}_by_{effective_cols}\"))] \
+        #[allow(clippy::unreadable_literal)]
         pub static TENT_FILTER_WEIGHTS: [f32; {}] = [",
         effective_rows * effective_cols
     )
@@ -724,6 +725,7 @@ fn main() {
     writeln!(
         tent_file,
         "#[cfg_attr(all(feature = \"ffi\", feature = \"unstable\"), unsafe(export_name = \"yume_pdq_unstable_lut_tent_filter_weights_x8_{effective_rows}_by_{effective_cols}\"))] \
+        #[allow(clippy::unreadable_literal)]
         pub static TENT_FILTER_WEIGHTS_X8: [f32; {}] = [",
         effective_rows * 8,
     )

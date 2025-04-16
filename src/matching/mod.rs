@@ -27,6 +27,7 @@ use generic_array::{
 };
 
 #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
+#[allow(clippy::wildcard_imports)]
 use core::arch::x86_64::*;
 use core::{
     fmt::{Debug, Display},
@@ -102,7 +103,7 @@ pub trait PDQMatcher {
 
 /// A CPU-based matcher that uses population count.
 ///
-/// Expect about 250-350 million haystack vectors per second without vectorization and 500-700 million with AVX-512.
+/// Expect about 250-350 million haystack vectors per second without vectorization and 600-750 million with AVX-512.
 ///
 /// It will use the AVX-512 vectorized vpopcntq if available and compile-time enabled (enable the "avx512" feature and "-C target-feature=+avx512vpopcntdq").
 pub struct CpuMatcher<const THRESHOLD: usize> {
@@ -115,6 +116,7 @@ pub struct CpuMatcher<const THRESHOLD: usize> {
 impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
     #[cfg(not(all(feature = "avx512", target_feature = "avx512vpopcntdq")))]
     #[inline]
+    #[must_use]
     /// Create a new CPU matcher from needles.
     pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>) -> Self {
         Self {
@@ -128,6 +130,7 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
     }
 
     /// Create a new CPU matcher from a nested array of PDQ hashes.
+    #[must_use]
     pub fn new_nested<
         T,
         N: ArrayLength + Mul<M>,
@@ -139,11 +142,18 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
     where
         <N as Mul<M>>::Output: ArrayLength,
     {
-        unsafe { Self::new(core::mem::transmute(needles)) }
+        #[allow(clippy::missing_transmute_annotations, clippy::transmute_ptr_to_ptr)]
+        unsafe {
+            Self::new(core::mem::transmute::<
+                _,
+                &GenericArray<GenericArray<u8, U32>, U8>,
+            >(needles))
+        }
     }
 
     #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
     #[inline]
+    #[must_use]
     /// Create a new CPU matcher from needles.
     pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>) -> Self {
         use crate::alignment::Align64;
@@ -151,6 +161,7 @@ impl<const THRESHOLD: usize> CpuMatcher<THRESHOLD> {
         let ones = unsafe { _mm512_set1_epi64(!0) };
 
         let regs = core::array::from_fn(|reg| unsafe {
+            #[allow(clippy::cast_ptr_alignment)]
             for i in 0..8 {
                 tmp[i] = needles[i].as_ptr().cast::<u64>().add(reg).read_unaligned();
             }
@@ -191,10 +202,10 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
         >,
     ) -> bool {
         let mut matched = false;
-        let inner: &GenericArray<_, _> = &*query;
-        for q in inner {
-            for n in self.needles.iter() {
+        for q in &**query {
+            for n in &self.needles {
                 let dist = unsafe {
+                    #[allow(clippy::transmute_ptr_to_ptr)]
                     core::mem::transmute::<&GenericArray<u8, U32>, &GenericArray<u64, U4>>(q)
                 }
                 .iter()
@@ -222,6 +233,7 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
 
         use crate::alignment::Align64;
         unsafe {
+            #[allow(clippy::cast_possible_wrap)]
             let addend = _mm512_set1_epi64(THRESHOLD as i64);
 
             // defer the result of the match by not branching in the middle
@@ -240,6 +252,7 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
 
             for i in 0..2048 {
                 // we forced alignment on type level, this is guaranteed to be aligned
+                #[allow(clippy::cast_ptr_alignment)]
                 let queries = [
                     _mm512_set1_epi64(query[i].as_ptr().cast::<i64>().add(0).read()),
                     _mm512_set1_epi64(query[i].as_ptr().cast::<i64>().add(1).read()),
@@ -274,8 +287,6 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
 
             _mm512_store_epi64(output.as_mut_ptr().cast(), results);
 
-            eprintln!("{:?}", output);
-
             output.iter().any(|x| (*x & 256) != 0)
         }
     }
@@ -290,6 +301,7 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
     ) -> Option<R> {
         for (i, q) in query.iter().enumerate() {
             for (j, n) in self.needles.iter().enumerate() {
+                #[allow(clippy::transmute_ptr_to_ptr)]
                 let dist = unsafe {
                     core::mem::transmute::<&GenericArray<u8, U32>, &GenericArray<u64, U4>>(q)
                 }
@@ -317,6 +329,7 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
         mut f: F,
     ) -> Option<R> {
         unsafe {
+            #[allow(clippy::cast_possible_wrap)]
             let threshold = _mm512_set1_epi64((256 - THRESHOLD) as i64);
 
             // the needles are pre-pivot and pre-complemented, i.e:
@@ -332,10 +345,11 @@ impl<const THRESHOLD: usize> PDQMatcher for CpuMatcher<THRESHOLD> {
             // [Q3|Q3|Q3|Q3|Q3|Q3|Q3|Q3]
 
             // The query
+            #[allow(clippy::cast_ptr_alignment)]
             for i in 0..2048 {
-                // TODO guarantee alignment on type level
                 let decomposed: [u64; 4] = query[i].as_ptr().cast::<[u64; 4]>().read();
 
+                #[allow(clippy::cast_possible_wrap)]
                 let queries = [
                     _mm512_set1_epi64(decomposed[0] as i64),
                     _mm512_set1_epi64(decomposed[1] as i64),

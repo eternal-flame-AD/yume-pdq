@@ -1,3 +1,4 @@
+#![allow(clippy::must_use_candidate)]
 use generic_array::{
     GenericArray,
     sequence::Unflatten,
@@ -122,7 +123,7 @@ impl JSYumePDQ {
         >::try_from_slice(input)
         .map_err(|_| "Input buffer is not 512x512".to_string())?.unflatten_square_ref();
 
-        let mut output_array = GenericArray::<_, U32>::try_from_mut_slice(output)
+        let output_array = GenericArray::<_, U32>::try_from_mut_slice(output)
             .map_err(|_| "Output buffer is not 32 bytes".to_string())?
             .unflatten();
 
@@ -132,7 +133,7 @@ impl JSYumePDQ {
             &mut self.inner.kernel,
             input_array,
             &mut threshold,
-            &mut output_array,
+            output_array,
             &mut self.inner.buf1_input,
             &mut self.inner.buf1_tmp,
             &mut self.inner.buf1_pdqf,
@@ -172,7 +173,7 @@ impl JSYumePDQ {
                 crate::visit_dihedrals(
                     &mut self.inner.kernel,
                     &mut self.inner.buf1_pdqf,
-                    &mut output_array,
+                    output_array,
                     threshold,
                     |coords, _, (quality, pdqf, output)| {
                         let coords = coords.into_tuples();
@@ -208,6 +209,7 @@ impl JSYumePDQ {
     }
 
     #[wasm_bindgen(js_name = dispose)]
+    #[allow(clippy::drop_non_drop)]
     /// Dispose of the instance.
     pub fn dispose(self) {
         drop(self);

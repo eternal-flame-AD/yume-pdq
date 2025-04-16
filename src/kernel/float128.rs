@@ -74,31 +74,36 @@ impl<const C: u32> NumCast for ArbFloat<C> {
 
 impl<const C: u32> ArbFloat<C> {
     /// Convert to 32-bit floating point type.
+    #[must_use]
     pub fn to_f32(&self) -> f32 {
         self.0.to_f32()
     }
 
     /// Convert to 64-bit floating point type.
+    #[must_use]
     pub fn to_f64(&self) -> f64 {
         self.0.to_f64()
     }
 
     /// Square root.
+    #[must_use]
     pub fn sqrt(&self) -> Self {
         Self(self.0.clone().sqrt())
     }
 
     /// Cosine.
+    #[must_use]
     pub fn cos(&self) -> Self {
         Self(self.0.clone().cos())
     }
 
     /// Pi.
+    #[must_use]
     pub fn pi() -> Self {
         let mut pi = rug::Float::new(C);
         pi.acos_mut();
         pi *= 2;
-        assert!(
+        debug_assert!(
             pi.to_f64() == std::f64::consts::PI,
             "pi: {:?}, std::f64::consts::PI: {:?}",
             pi.to_f64(),
@@ -123,6 +128,7 @@ macro_rules! impl_from_primitive {
 macro_rules! impl_to_primitive {
     ($($name:ident as $t:ty),*) => {
         $(
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             fn $name(&self) -> Option<$t> {
                 let val = self.0.to_f64();
                 if val.is_nan() {

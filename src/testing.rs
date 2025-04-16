@@ -1,3 +1,9 @@
+#![allow(
+    clippy::missing_panics_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 /*
  * Copyright (c) 2025 Yumechi <yume@yumechi.jp>
  *
@@ -101,12 +107,21 @@ pub fn dump_thresholding_diagnostic<
 ) -> std::io::Result<()> {
     use std::io::Write;
 
+    // according to AI this is more or less colorblind friendly and still intuitive
+    const RED: [u8; 3] = [230, 25, 75]; // invalid number (bright red - universally indicates error)
+    const ORANGE: [u8; 3] = [245, 130, 48]; // overshoot by claiming above median when it's below (warm orange - indicates "hot"/over)
+    const BLUE: [u8; 3] = [0, 130, 200]; // correctly identified as above median (blue - positive)
+    const YELLOW: [u8; 3] = [255, 225, 25]; // correctly identified as below median (yellow - caution)
+    const BROWN: [u8; 3] = [170, 110, 40]; // undershoot by claiming below median when it's above (cool brown - indicates "cold"/under)
+    const GRAY: [u8; 3] = [128, 128, 128]; // refused to identify (neutral gray - no decision made)
+    const WHITE: [u8; 3] = [255, 255, 255]; // this element is right on the median
+
     // find the median independently by ourselves
     let mut ranking: GenericArray<GenericArray<usize, W>, H> =
         GenericArray::generate(|i| GenericArray::generate(|j| i * W::USIZE + j));
 
     let ranking_flat = unsafe {
-        std::slice::from_raw_parts_mut(ranking.as_mut_ptr() as *mut usize, W::USIZE * H::USIZE)
+        std::slice::from_raw_parts_mut(ranking.as_mut_ptr().cast::<usize>(), W::USIZE * H::USIZE)
     };
 
     unsafe {
@@ -143,22 +158,13 @@ pub fn dump_thresholding_diagnostic<
     writeln!(of, "{} {}", W::USIZE, H::USIZE)?;
     writeln!(of, "255")?;
 
-    // according to AI this is more or less colorblind friendly and still intuitive
-    const RED: [u8; 3] = [230, 25, 75]; // invalid number (bright red - universally indicates error)
-    const ORANGE: [u8; 3] = [245, 130, 48]; // overshoot by claiming above median when it's below (warm orange - indicates "hot"/over)
-    const BLUE: [u8; 3] = [0, 130, 200]; // correctly identified as above median (blue - positive)
-    const YELLOW: [u8; 3] = [255, 225, 25]; // correctly identified as below median (yellow - caution)
-    const BROWN: [u8; 3] = [170, 110, 40]; // undershoot by claiming below median when it's above (cool brown - indicates "cold"/under)
-    const GRAY: [u8; 3] = [128, 128, 128]; // refused to identify (neutral gray - no decision made)
-    const WHITE: [u8; 3] = [255, 255, 255]; // this element is right on the median
-
     for i in 0..H::USIZE {
         for j in 0..W::USIZE {
             let val = &input[i][j];
-            let input_thresholding = is_one(&val);
+            let input_thresholding = is_one(val);
             match (
-                val.partial_cmp(&actual_median_ib),
-                val.partial_cmp(&actual_median_ub),
+                val.partial_cmp(actual_median_ib),
+                val.partial_cmp(actual_median_ub),
                 input_thresholding,
             ) {
                 (Some(Ordering::Equal), _, _) => {

@@ -92,6 +92,7 @@ pub type FallbackKernel = DefaultKernelPadXYTo128;
 ///
 /// Generally we will make every effort to make new kernels available through this function so you don't need to care about the underlying implementation.
 #[inline(always)]
+#[must_use]
 pub fn smart_kernel() -> impl Kernel<
     RequiredHardwareFeature = impl EvaluateHardwareFeature<EnabledStatic = B1>,
     InputDimension = U512,
@@ -207,6 +208,7 @@ impl<I, L: SquareOf> SquareGenericArrayExt<I, L> for GenericArray<I, <L as Squar
 pub trait PreciseKernel: Kernel {}
 
 // Copied verbatim from [darwinium-com/pdqhash](https://github.com/darwinium-com/pdqhash/blob/main/src/lib.rs).
+#[allow(clippy::all, clippy::pedantic)]
 pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>, U16>) -> F {
     let mut min = m.iter().flatten().cloned().reduce(F::min).unwrap();
     let mut max = m.iter().flatten().cloned().reduce(F::max).unwrap();
@@ -430,6 +432,7 @@ pub trait Kernel {
     /// Shorthand to `<<K as Kernel>::RequiredHardwareFeature as EvaluateHardwareFeature>::met_runtime()`
     ///
     /// Usually downstream applications should be generic over this trait and finally a runtime check is done to dispatch application logic with the suitable kernel.
+    #[must_use]
     fn required_hardware_features_met() -> bool {
         Self::RequiredHardwareFeature::met_runtime()
     }
@@ -462,6 +465,7 @@ pub trait Kernel {
         <Self as Kernel>::OutputDimension: DivisibleBy8;
 
     /// Compute the sum of gradients of the input buffer in both horizontal and vertical directions.
+    #[must_use]
     fn sum_of_gradients(
         &mut self,
         _input: &GenericArray<
@@ -473,6 +477,7 @@ pub trait Kernel {
         Self::RequiredHardwareFeature: EvaluateHardwareFeature<EnabledStatic = B1>;
 
     /// Adjust the quality metric to be between 0 and 1.
+    #[must_use]
     fn adjust_quality(_input: Self::InternalFloat) -> f32;
 
     /// Apply a 2D DCT-II transformation to the input buffer write the result to the output buffer.
@@ -602,6 +607,7 @@ where
         }
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input.to_f32().unwrap() / (QUALITY_ADJUST_DIVISOR as f32);
 
@@ -662,10 +668,10 @@ where
     fn dct2d(
         &mut self,
         buffer: &GenericArray<GenericArray<f32, Self::Buffer1WidthX>, Self::Buffer1LengthY>,
-        _tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
+        tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        Self::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, _tmp_row_buffer, output);
+        Self::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, tmp_row_buffer, output);
     }
 }
 
@@ -695,6 +701,7 @@ impl Kernel for ReferenceKernel<f32> {
         "reference_scalar_autovectorized"
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
 
@@ -827,6 +834,7 @@ impl Kernel for ReferenceKernel<f64> {
         "reference_scalar_autovectorized_f64"
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn adjust_quality(input: Self::InternalFloat) -> f32 {
         let scaled = input / (QUALITY_ADJUST_DIVISOR as f64);
 
@@ -927,8 +935,8 @@ impl Kernel for ReferenceKernel<f64> {
         let mut buffer = buffer
             .flatten()
             .into_iter()
-            .map(|s| *s as f64)
-            .collect::<Vec<_>>();
+            .map(|s| From::from(*s))
+            .collect::<Vec<f64>>();
         reference::jarosz_filter_float(
             buffer.as_mut_slice().try_into().unwrap(),
             512,
@@ -975,7 +983,7 @@ impl<const C: u32> Kernel for ReferenceKernel<float128::ArbFloat<C>> {
         &mut self,
         input: &GenericArray<GenericArray<Self::InternalFloat, U16>, U16>,
     ) -> Self::InternalFloat {
-        let mut gradient_sum = Default::default();
+        let mut gradient_sum = float128::ArbFloat::default();
 
         for i in 0..(16 - 1) {
             for j in 0..16 {
