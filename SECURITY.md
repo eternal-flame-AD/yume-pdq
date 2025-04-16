@@ -42,7 +42,8 @@ These are considered security vulnerabilities:
 These are considered bugs, and thus should be handled through the GitHub issue tracker:
 
 - **Performance issues**:
-    - Incorrect or suboptimal results related to statistical accuracy, recall, or algorithmic correctness.
+    - Incorrect or suboptimal results related to statistical accuracy, recall, or algorithmic correctness. 
+    - Security issue related to the use of `yume-pdq` output: if a numerical error in `yume-pdq` allowed certain adversarially-altered illegal images to be allowed through on your platform causing a security issue, that is considered a bug not a security vulnerability in `yume-pdq`.
     - Unstable performance that is not dependent on the input, or degradation that is not significant enough (<10x).
 - **Documentation issues**:
     - Misleading API design or documentation that does not result in any security issues defined above.
