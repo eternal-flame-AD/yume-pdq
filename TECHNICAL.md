@@ -77,6 +77,16 @@ We deliberately chose exact linear scan over approximate nearest neighbor (ANN) 
    - Trivially implementable in accelerated hardware (SIMD, GPU, FPGA, etc.) with minor recurrent memory transfer overhead
    - No complex index structures needed, no memory overhead other than the ~300MB data itself.
 
+## Matching Strategy: What about metric-tree based solutions?
+
+We decided to not go for that route either because it is unlikely to produce a faster solution:
+
+1. **Uniqueness of PDQ hash characteristics**: PDQ hashes end with a binary quantization at median, that means the overwhelming majority of all hashes except the most edge-case ones have a hamming weight of exactly 128. This completely eliminated any possibility of elimination of candidates purely by hamming distance.
+
+2. **Relative High Dimensionality and Large Radii**: Metric tree based solutions such as BK-tree and KD-tree all exploit the fact that hamming distance has triangular inequality, that is, for any three points, the distance between the farthest two points is no less than the sum of the other two distances. This allows one to prune the search space significantly. However, in PDQ screening, the vast majority of hashes, and the hashes compared to the needle would be very close to 128, and coupled with a large radius (officially recommended 31 bits and some clients certainly would like to flag with a higher threshold), this means all metric tree must visit at least a "range" of 31*2 = 62 bits to ensure a exhaustive match. This is very unfriendly and likely to cause a search close to a full linear scan.
+
+3. **Unique Batching Characteristic**: PDQ is not dihedral invariant, thus for each image all 8 hashes must be compared against the database to ensure a correct match. This naturally penalizes the use of all data-dependent graph/tree traversal based solutions, as they would be forced to run 8 independent searches while a linear scan can match all 8 at once, furthermore with the support of vectorized instructions, 8 comparisons can be done independently in the 8 64-bit lanes of an AVX512 CPU eliminating the need for any horizontal reductions (and the reason why `yume-pdq` is faster than off-the-shelf exhaustive scan solutions like Facebook(R) Faiss IndexBinaryFlat).
+
 ## Safety Considerations
 
 Hand-written SIMD is unsafe and we take several precautions:

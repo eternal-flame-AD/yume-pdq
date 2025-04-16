@@ -44,7 +44,7 @@ Provide better than off-the-shelf solution performance across the board by fully
 
 All components are decoupled from each other, allowing integrator to mix and match external libraries such as using a forensic-grade hash provider but still use `yume-pdq` for high performance 100% recall matching.
 
-Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. Our implementation achieves ~0.79ms for 10M vector matches on GPU, making it suitable for real-time applications. For detailed analysis of accuracy and performance decisions, see [TECHNICAL.md](TECHNICAL.md).
+Be _accurate enough_ for high-throughput and real-time screening when there is a human user waiting for the result and/or the server CPU time is constrained. Our implementation achieves ~0.79ms for 10M vector matches on GPU, making it suitable for real-time applications. For detailed analysis of accuracy and performance decisions on why we chose this linear-scan based approach over ANN or metric tree based solutions, see [TECHNICAL.md](TECHNICAL.md).
 
 Important: You _should NOT_ submit hashes to databases using output of any optimized (variant) kernels in this library, they are designed to be statistically compatible for matching but absolutely not for submission to a database.
 

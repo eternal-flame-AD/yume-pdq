@@ -59,7 +59,10 @@ pub mod kernel;
 
 /// PDQ matching solution
 ///
-/// Currently all solutions are exact linear-scan nearest neighbor thresholding and are expected to continue to be so.
+/// Currently all solutions are exact linear-scan nearest neighbor thresholding and are expected to continue to be so
+///
+/// Metric-tree based solutions such as BK-tree and KD-tree are not efficient due to unique characteristics of PDQ hash and dihedral invariance necessitating all screens to match 8 hashes at once. See [TECHNICAL.md](TECHNICAL.md) for more details.
+///
 /// ANN will lead to significant, guaranteed false negatives (unlike my DISC21 benchmark shows 2 outliers (still well within threshold) does not mean guaranteed <98% recall).
 /// Experiment using Facebook(R) Faiss IndexBinaryHNSW on real NEMEC PDQ data shows 90% recall with nearing 10ms per query single-threaded.
 /// Even if one can accept this recall (one shouldn't), performance is still not competitive with any optimized matcher here.
