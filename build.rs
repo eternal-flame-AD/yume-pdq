@@ -390,7 +390,10 @@ fn generate_version_ffi() {
     let mut file =
         File::create(PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("version_ffi.rs"))
             .unwrap();
-    let version = env!("CARGO_PKG_VERSION");
+    let mut version = env!("CARGO_PKG_VERSION").to_string();
+    if let Some(idx) = version.find('-') {
+        version.truncate(idx);
+    }
     let version_parts = version.split('.').collect::<Vec<_>>();
     assert_eq!(
         version_parts.len(),

@@ -1,6 +1,6 @@
 [package]
 name = "yume-pdq"
-version = "0.3.4"
+version = "1.0.0-alpha.1"
 edition = "2024"
 authors = ["Yumechi <yume@yumechi.jp>"]
 keywords = ["pdq", "perceptual", "NCMEC", "similarity"]
