@@ -255,7 +255,7 @@ impl PDQMatcher for CpuMatcher {
             GenericArray<GenericArray<u8, Self::InputDimension>, Self::BatchSize>,
         >,
     ) -> bool {
-        use core::arch::x86_64::_mm512_store_epi64;
+        use core::arch::x86_64::{_mm512_kortestz, _mm512_store_epi64};
 
         use crate::alignment::Align64;
         unsafe {
@@ -287,7 +287,7 @@ impl PDQMatcher for CpuMatcher {
                 ];
 
                 // LLVM can be smarter and shave off 1 or 2 instructions here,
-                // uses vpternlogq, we don't have to be too smart here
+                // uses vpternlogq + truth table, we don't have to be too smart here
                 let differences = [
                     _mm512_xor_si512(self.needles_comp[0], queries[0]),
                     _mm512_xor_si512(self.needles_comp[1], queries[1]),
@@ -309,6 +309,8 @@ impl PDQMatcher for CpuMatcher {
                 results = _mm512_or_si512(results, _mm512_add_epi64(count3, addend));
             }
 
+            // LLVM can optimize this into a vptestmd truth table, optimized builds will not have this store
+            // this is just to be more readable (and easier to debug by just adding a print)
             let mut output: Align64<[u64; 8]> = Align64::default();
 
             _mm512_store_epi64(output.as_mut_ptr().cast(), results);
@@ -422,6 +424,20 @@ mod tests {
     use rand::prelude::*;
 
     use super::*;
+
+    #[test]
+    fn test_tzcnt_loop_always_terminates() {
+        use core::arch::x86_64::_tzcnt_u16;
+
+        // demonstrate that the while loop in find() always terminates
+        for case in 0..=u8::MAX {
+            let mut matched = case;
+            while matched != 0 {
+                let needle_idx = unsafe { _tzcnt_u16(matched as u16) };
+                matched ^= 1 << needle_idx;
+            }
+        }
+    }
 
     #[test]
     fn test_scan_cpu() {
