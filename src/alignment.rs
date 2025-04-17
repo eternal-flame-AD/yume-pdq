@@ -40,6 +40,10 @@ pub unsafe trait AlignerTo<T>: Deref<Target = T> + DerefMut<Target = T> + From<T
     type Output;
 
     /// Create a `core::alloc::Layout` for the aligner.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the request memory size is rejected by the allocator API.
     fn create_layout() -> core::alloc::Layout;
 }
 
@@ -48,7 +52,8 @@ unsafe impl<T> AlignerTo<T> for Align1<T> {
     type Output = Align1<T>;
 
     fn create_layout() -> core::alloc::Layout {
-        unsafe { core::alloc::Layout::from_size_align_unchecked(core::mem::size_of::<T>(), 1) }
+        core::alloc::Layout::from_size_align(core::mem::size_of::<T>(), 1)
+            .expect("request memory size is too large for allocation")
     }
 }
 
@@ -57,7 +62,8 @@ unsafe impl<T> AlignerTo<T> for Align8<T> {
     type Output = Align8<T>;
 
     fn create_layout() -> core::alloc::Layout {
-        unsafe { core::alloc::Layout::from_size_align_unchecked(core::mem::size_of::<T>(), 8) }
+        core::alloc::Layout::from_size_align(core::mem::size_of::<T>(), 8)
+            .expect("request memory size is too large for allocation")
     }
 }
 
@@ -65,7 +71,8 @@ unsafe impl<T> AlignerTo<T> for Align32<T> {
     type Alignment = U32;
     type Output = Align32<T>;
     fn create_layout() -> core::alloc::Layout {
-        unsafe { core::alloc::Layout::from_size_align_unchecked(core::mem::size_of::<T>(), 32) }
+        core::alloc::Layout::from_size_align(core::mem::size_of::<T>(), 32)
+            .expect("request memory size is too large for allocation")
     }
 }
 
@@ -74,7 +81,8 @@ unsafe impl<T> AlignerTo<T> for Align64<T> {
     type Output = Align64<T>;
 
     fn create_layout() -> core::alloc::Layout {
-        unsafe { core::alloc::Layout::from_size_align_unchecked(core::mem::size_of::<T>(), 64) }
+        core::alloc::Layout::from_size_align(core::mem::size_of::<T>(), 64)
+            .expect("request memory size is too large for allocation")
     }
 }
 
