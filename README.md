@@ -282,7 +282,7 @@ The Rust API is fully generic over almost all possible parameters, so you don't 
 ```rust
 use generic_array::sequence::{Flatten, GenericSequence};
 use core::f32::consts::PI; // no-std compatible (except the printing part)
-use yume_pdq::{GenericArray, smart_kernel};
+use yume_pdq::{GenericArray, smart_kernel, alignment::Align8};
 
 // Fill with horizontal FM pattern - expect a strong horizontal frequency component in the DCT response
 // this demonstrates the "thing" DCT does: "it 'wraps' one level of frequency domain information into spatial domain"
@@ -305,7 +305,13 @@ let mut kernel = smart_kernel();
 // warning: while they don't need to be zeroed after every use, they must be zero-initialized
 // because junk data in the buffer padding will get picked up by some SIMD kernels and cause subtle undefined behavior
 let mut output = GenericArray::default(); // Will contain the final 256-bit hash
-let mut buf1 = GenericArray::default(); // Temporary buffer
+
+#[cfg(feature = "alloc")]
+let mut buf1 = yume_pdq::alignment::calloc_generic_array_2d::<f32, Align8<_>, _, _>(); // Temporary buffer, this buffer is big one might want to use a heap allocator
+#[cfg(not(feature = "alloc"))]
+let mut buf1 = GenericArray::default();
+
+
 let mut row_tmp = GenericArray::default(); // Temporary buffer
 let mut pdqf = GenericArray::default(); // Temporary buffer (PDQF unquantized hash)
 

@@ -19,11 +19,14 @@
  * limitations under the License.
  */
 
-use generic_array::sequence::Flatten;
+use generic_array::typenum::IsLessOrEqual;
 #[allow(unused_imports)]
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{B0, B1, Bit, U4, U8, U32, U2048},
+    sequence::{Flatten, GenericSequence},
+    typenum::{
+        B0, B1, Bit, U1, U2, U3, U4, U5, U6, U7, U8, U16, U24, U32, U40, U48, U56, U64, U2048, UInt,
+    },
 };
 
 #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
@@ -103,39 +106,43 @@ pub trait PDQMatcher {
 
 /// A CPU-based matcher that uses population count.
 ///
+/// The minimum atomic unit of work is 2048 vectors, matched against 8 needles (suitable for realistic use cases where all 8 dihedral invariants are checked).
+///
+/// This is only validated and performance tuned to up to 64 needles at once,
+/// and it is best to use no more than 32 needles on AVX-512 platforms for register pressure concerns, as compilers would have more registers to allow for global optimizations.
+///
 /// Expect about 250-350 million haystack vectors per second without vectorization and 600-750 million with AVX-512.
 ///
 /// It will use the AVX-512 vectorized vpopcntq if available and compile-time enabled (enable the "avx512" feature and "-C target-feature=+avx512vpopcntdq").
-pub struct CpuMatcher {
+pub struct CpuMatcher<B: ArrayLength = U2048, N: ArrayLength + IsLessOrEqual<U8, Output = B1> = U1>
+{
     #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
-    needles_comp: [__m512i; 4],
+    needles_comp: GenericArray<[__m512i; 4], N>,
     #[cfg(not(all(feature = "avx512", target_feature = "avx512vpopcntdq")))]
-    needles: GenericArray<GenericArray<u64, U4>, U8>,
+    needles: GenericArray<GenericArray<u64, U4>, Times8<N>>,
     threshold: u64,
+    _marker: core::marker::PhantomData<(B, N)>,
 }
 
-impl CpuMatcher {
+type Times4<T> = UInt<UInt<T, B0>, B0>;
+type Times8<T> = UInt<Times4<T>, B0>;
+
+impl<B: ArrayLength, N: ArrayLength + IsLessOrEqual<U8, Output = B1>> CpuMatcher<B, N> {
     #[cfg(not(all(feature = "avx512", target_feature = "avx512vpopcntdq")))]
     #[inline]
     #[must_use]
     /// Create a new CPU matcher from needles.
     ///
-    /// # Panics
-    ///
-    /// Panics if the threshold is not in the range of [0, 256].
-    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>, threshold: u64) -> Self {
-        assert!(
-            threshold <= 256,
-            "threshold must be in the range of [0, 256]"
-        );
+    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, Times8<N>>, threshold: u8) -> Self {
         Self {
             needles: unsafe {
                 needles
                     .as_ptr()
-                    .cast::<GenericArray<_, U8>>()
+                    .cast::<GenericArray<_, Times8<N>>>()
                     .read_unaligned()
             },
-            threshold,
+            threshold: threshold as u64,
+            _marker: core::marker::PhantomData,
         }
     }
 
@@ -147,20 +154,20 @@ impl CpuMatcher {
     #[must_use]
     pub fn new_nested<
         T,
-        N: ArrayLength + Mul<M>,
+        K: ArrayLength + Mul<M>,
         M: ArrayLength,
-        V: Flatten<T, N, M, Output = GenericArray<u8, U32>>,
+        V: Flatten<T, K, M, Output = GenericArray<u8, U32>>,
     >(
-        needles: &GenericArray<V, U8>,
-        threshold: u64,
+        needles: &GenericArray<V, Times8<N>>,
+        threshold: u8,
     ) -> Self
     where
-        <N as Mul<M>>::Output: ArrayLength,
+        <K as Mul<M>>::Output: ArrayLength,
     {
         #[allow(clippy::missing_transmute_annotations, clippy::transmute_ptr_to_ptr)]
         unsafe {
             Self::new(
-                core::mem::transmute::<_, &GenericArray<GenericArray<u8, U32>, U8>>(needles),
+                core::mem::transmute::<_, &GenericArray<GenericArray<u8, U32>, Times8<N>>>(needles),
                 threshold,
             )
         }
@@ -170,35 +177,36 @@ impl CpuMatcher {
     #[inline]
     #[must_use]
     /// Create a new CPU matcher from needles.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the threshold is not in the range of [0, 256].
-    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, U8>, threshold: u64) -> Self {
-        assert!(
-            threshold <= 256,
-            "threshold must be in the range of [0, 256]"
-        );
+    pub fn new(needles: &GenericArray<GenericArray<u8, U32>, Times8<N>>, threshold: u8) -> Self {
         use crate::alignment::Align64;
         let mut tmp = Align64::<[u64; 8]>::default();
         let ones = unsafe { _mm512_set1_epi64(!0) };
 
-        let regs = core::array::from_fn(|reg| unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            for i in 0..8 {
-                tmp[i] = needles[i].as_ptr().cast::<u64>().add(reg).read_unaligned();
-            }
-            _mm512_xor_si512(ones, _mm512_load_si512(tmp.as_ptr().cast()))
+        let regs = GenericArray::<_, N>::generate(|block| {
+            core::array::from_fn(|reg| unsafe {
+                #[allow(clippy::cast_ptr_alignment)]
+                for i in 0..8 {
+                    tmp[i] = needles[block * 8 + i]
+                        .as_ptr()
+                        .cast::<u64>()
+                        .add(reg)
+                        .read_unaligned();
+                }
+                _mm512_xor_si512(ones, _mm512_load_si512(tmp.as_ptr().cast()))
+            })
         });
         Self {
             needles_comp: regs,
-            threshold,
+            threshold: threshold as u64,
+            _marker: core::marker::PhantomData,
         }
     }
 }
 
-impl PDQMatcher for CpuMatcher {
-    type BatchSize = U2048;
+impl<B: ArrayLength, N: ArrayLength + IsLessOrEqual<U8, Output = B1>> PDQMatcher
+    for CpuMatcher<B, N>
+{
+    type BatchSize = B;
     #[cfg(all(feature = "avx512", target_feature = "avx512vpopcntdq"))]
     type RequiredHardwareFeature = crate::kernel::x86::CpuIdAvx512Vpopcntdq;
     #[cfg(not(all(feature = "avx512", target_feature = "avx512vpopcntdq")))]
@@ -276,7 +284,7 @@ impl PDQMatcher for CpuMatcher {
             // [Q2|Q2|Q2|Q2|Q2|Q2|Q2|Q2]
             // [Q3|Q3|Q3|Q3|Q3|Q3|Q3|Q3]
 
-            for i in 0..2048 {
+            for i in 0..B::USIZE {
                 // we forced alignment on type level, this is guaranteed to be aligned
                 #[allow(clippy::cast_ptr_alignment)]
                 let queries = [
@@ -288,25 +296,30 @@ impl PDQMatcher for CpuMatcher {
 
                 // LLVM can be smarter and shave off 1 or 2 instructions here,
                 // uses vpternlogq + truth table, we don't have to be too smart here
-                let differences = [
-                    _mm512_xor_si512(self.needles_comp[0], queries[0]),
-                    _mm512_xor_si512(self.needles_comp[1], queries[1]),
-                    _mm512_xor_si512(self.needles_comp[2], queries[2]),
-                    _mm512_xor_si512(self.needles_comp[3], queries[3]),
-                ];
+                let differences = GenericArray::<_, N>::generate(|block| {
+                    [
+                        _mm512_xor_si512(self.needles_comp[block][0], queries[0]),
+                        _mm512_xor_si512(self.needles_comp[block][1], queries[1]),
+                        _mm512_xor_si512(self.needles_comp[block][2], queries[2]),
+                        _mm512_xor_si512(self.needles_comp[block][3], queries[3]),
+                    ]
+                });
 
-                let counts = [
-                    _mm512_popcnt_epi64(differences[0]),
-                    _mm512_popcnt_epi64(differences[1]),
-                    _mm512_popcnt_epi64(differences[2]),
-                    _mm512_popcnt_epi64(differences[3]),
-                ];
+                let counts = GenericArray::<_, N>::generate(|block| {
+                    let qwords = [
+                        _mm512_popcnt_epi64(differences[block][0]),
+                        _mm512_popcnt_epi64(differences[block][1]),
+                        _mm512_popcnt_epi64(differences[block][2]),
+                        _mm512_popcnt_epi64(differences[block][3]),
+                    ];
+                    let reduction1 = _mm512_add_epi64(qwords[0], qwords[1]);
+                    let reduction2 = _mm512_add_epi64(qwords[2], qwords[3]);
+                    _mm512_add_epi64(_mm512_add_epi64(reduction1, reduction2), addend)
+                });
 
-                let count1 = _mm512_add_epi64(counts[0], counts[1]);
-                let count2 = _mm512_add_epi64(counts[2], counts[3]);
-                let count3 = _mm512_add_epi64(count1, count2);
-
-                results = _mm512_or_si512(results, _mm512_add_epi64(count3, addend));
+                counts
+                    .into_iter()
+                    .for_each(|count| results = _mm512_or_si512(results, count));
             }
 
             // LLVM can optimize this into a vptestmd truth table, optimized builds will not have this store
@@ -374,7 +387,7 @@ impl PDQMatcher for CpuMatcher {
 
             // The query
             #[allow(clippy::cast_ptr_alignment)]
-            for i in 0..2048 {
+            for i in 0..B::USIZE {
                 let decomposed: [u64; 4] = query[i].as_ptr().cast::<[u64; 4]>().read();
 
                 #[allow(clippy::cast_possible_wrap)]
@@ -385,31 +398,35 @@ impl PDQMatcher for CpuMatcher {
                     _mm512_set1_epi64(decomposed[3] as i64),
                 ];
 
-                let differences = [
-                    _mm512_xor_si512(self.needles_comp[0], queries[0]),
-                    _mm512_xor_si512(self.needles_comp[1], queries[1]),
-                    _mm512_xor_si512(self.needles_comp[2], queries[2]),
-                    _mm512_xor_si512(self.needles_comp[3], queries[3]),
-                ];
+                let differences = GenericArray::<_, N>::generate(|block| {
+                    [
+                        _mm512_xor_si512(self.needles_comp[block][0], queries[0]),
+                        _mm512_xor_si512(self.needles_comp[block][1], queries[1]),
+                        _mm512_xor_si512(self.needles_comp[block][2], queries[2]),
+                        _mm512_xor_si512(self.needles_comp[block][3], queries[3]),
+                    ]
+                });
 
-                let counts = [
-                    _mm512_popcnt_epi64(differences[0]),
-                    _mm512_popcnt_epi64(differences[1]),
-                    _mm512_popcnt_epi64(differences[2]),
-                    _mm512_popcnt_epi64(differences[3]),
-                ];
+                let matched_blocks = GenericArray::<_, N>::generate(|block| {
+                    let qwords = [
+                        _mm512_popcnt_epi64(differences[block][0]),
+                        _mm512_popcnt_epi64(differences[block][1]),
+                        _mm512_popcnt_epi64(differences[block][2]),
+                        _mm512_popcnt_epi64(differences[block][3]),
+                    ];
+                    let reduction1 = _mm512_add_epi64(qwords[0], qwords[1]);
+                    let reduction2 = _mm512_add_epi64(qwords[2], qwords[3]);
+                    _mm512_cmpge_epi64_mask(_mm512_add_epi64(reduction1, reduction2), threshold)
+                });
 
-                let count1 = _mm512_add_epi64(counts[0], counts[1]);
-                let count2 = _mm512_add_epi64(counts[2], counts[3]);
-                let count3 = _mm512_add_epi64(count1, count2);
-
-                let mut matched = _mm512_cmpge_epi64_mask(count3, threshold);
-                while matched != 0 {
-                    let needle_idx = _tzcnt_u16(matched as u16);
-                    if let Some(result) = f(i, needle_idx as usize) {
-                        return Some(result);
+                for (block, mut matched) in matched_blocks.into_iter().enumerate() {
+                    while matched != 0 {
+                        let needle_idx = _tzcnt_u16(matched as u16);
+                        if let Some(result) = f(i, (needle_idx as usize) + block * 8) {
+                            return Some(result);
+                        }
+                        matched ^= 1 << needle_idx;
                     }
-                    matched ^= 1 << needle_idx;
                 }
             }
 
@@ -420,7 +437,7 @@ impl PDQMatcher for CpuMatcher {
 
 #[cfg(test)]
 mod tests {
-    use generic_array::typenum::{U32, U2048};
+    use generic_array::typenum::{U1, U2, U3, U8, U32};
     use rand::prelude::*;
 
     use super::*;
@@ -440,18 +457,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_scan_cpu() {
+    fn test_scan_cpu_impl<N: ArrayLength + IsLessOrEqual<U8, Output = B1>>() {
         let mut rng = rand::rng();
 
         // Generate random needles
-        let mut needles_data = GenericArray::<GenericArray<u8, U32>, U8>::default();
+        let mut needles_data = GenericArray::<GenericArray<u8, U32>, Times8<N>>::default();
         for needle in needles_data.iter_mut() {
             rng.fill_bytes(needle);
         }
 
         // Generate random batch data
+        #[cfg(not(feature = "alloc"))]
         let mut haystack_data = Align8::<GenericArray<GenericArray<u8, U32>, U2048>>::default();
+        #[cfg(feature = "alloc")]
+        let mut haystack_data =
+            crate::alignment::calloc_generic_array_2d::<u8, Align8<_>, U2048, U32>();
         for vector in haystack_data.iter_mut() {
             rng.fill_bytes(vector);
         }
@@ -486,10 +506,9 @@ mod tests {
         // Insert a few matches to ensure we're testing the matching logic
         // Copy a few needles into the batch at random positions
         // Try 1000x8 times just to make sure we didn't have a blindspot or something
-        for _test in 0..1000 {
-            for i in 0..8 {
-                let pos = rng.random_range(0..2048);
-                generate_positive_control(&mut rng, &haystack_data[pos], &mut needles_data[i], 20);
+        for pos in 0..2048 {
+            for i in 0..N::USIZE {
+                generate_positive_control(&mut rng, &haystack_data[pos], &mut needles_data[i], 31);
 
                 let mut kernel = CpuMatcher::new(&needles_data, 31);
                 // Compare results again
@@ -516,5 +535,20 @@ mod tests {
             #[allow(unreachable_code)]
             Some(i)
         });
+    }
+
+    #[test]
+    fn test_scan_cpu_8needles() {
+        test_scan_cpu_impl::<U1>();
+    }
+
+    #[test]
+    fn test_scan_cpu_16needles() {
+        test_scan_cpu_impl::<U2>();
+    }
+
+    #[test]
+    fn test_scan_cpu_24needles() {
+        test_scan_cpu_impl::<U3>();
     }
 }

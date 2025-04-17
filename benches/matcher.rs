@@ -1,14 +1,17 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use generic_array::{
     GenericArray,
-    typenum::{U8, U32, U2048},
+    typenum::{U1, U2, U3, U4, U8, U16, U24, U32, U2048},
 };
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 
 use yume_pdq::{
     alignment::Align8,
-    matching::{CpuMatcher, PDQMatcher, vulkan::VulkanMatcher, vulkan::VulkanVectorDatabase},
+    matching::{CpuMatcher, PDQMatcher},
 };
+
+#[cfg(feature = "vulkan")]
+use yume_pdq::matching::vulkan::{VulkanMatcher, VulkanVectorDatabase};
 
 fn bench_pdq_popcnt(c: &mut Criterion) {
     // about 10m vectors
@@ -29,13 +32,28 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             for vector in batch_data.iter_mut() {
                 rng.fill_bytes(vector);
             }
-            batch_data
+            Align8(batch_data)
         })
         .collect::<Vec<_>>();
 
     // Generate random needles
     let mut needles_data = Align8(GenericArray::<GenericArray<u8, U32>, U8>::default());
     for needle in needles_data.iter_mut() {
+        rng.fill_bytes(needle);
+    }
+
+    let mut needles16_data = Align8(GenericArray::<GenericArray<u8, U32>, U16>::default());
+    for needle in needles16_data.iter_mut() {
+        rng.fill_bytes(needle);
+    }
+
+    let mut needles24_data = Align8(GenericArray::<GenericArray<u8, U32>, U24>::default());
+    for needle in needles24_data.iter_mut() {
+        rng.fill_bytes(needle);
+    }
+
+    let mut needles32_data = Align8(GenericArray::<GenericArray<u8, U32>, U32>::default());
+    for needle in needles32_data.iter_mut() {
         rng.fill_bytes(needle);
     }
 
@@ -53,11 +71,10 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             },
             |b| {
                 b.iter(|| {
-                    let mut kernel =
-                        CpuMatcher::new(unsafe { core::mem::transmute(&needles_data) }, 31);
+                    let mut kernel = CpuMatcher::<U2048, U1>::new(&needles_data, 31);
                     let mut matched = false;
                     for batch in batches.iter() {
-                        matched |= kernel.scan(unsafe { core::mem::transmute(batch) });
+                        matched |= kernel.scan(batch);
                     }
                     assert!(!matched);
                     matched
@@ -115,12 +132,87 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             group.bench_function("vulkan", |b| {
                 b.iter(|| {
                     let mut matched = false;
-                    matched |= gpu_kernel0.scan(unsafe { core::mem::transmute(&needles_data) });
-                    matched |= gpu_kernel1.scan(unsafe { core::mem::transmute(&needles_data) });
+                    matched |= gpu_kernel0.scan(&needles_data);
+                    matched |= gpu_kernel1.scan(&needles_data);
                     assert!(!matched);
                 });
             });
         }
+    }
+
+    {
+        let mut group = c.benchmark_group("16needles/scan10mil");
+
+        group.throughput(Throughput::Elements(NUM_BATCHES as u64 * 2048 * 2));
+
+        group.bench_function(
+            if cfg!(all(feature = "avx512", target_feature = "avx512vpopcntdq")) {
+                "avx512 popcnt"
+            } else {
+                "scalar popcnt"
+            },
+            |b| {
+                b.iter(|| {
+                    let mut kernel = CpuMatcher::<U2048, U2>::new(&needles16_data, 31);
+                    let mut matched = false;
+                    for batch in batches.iter() {
+                        matched |= kernel.scan(batch);
+                    }
+                    assert!(!matched);
+                    matched
+                });
+            },
+        );
+    }
+
+    {
+        let mut group = c.benchmark_group("24needles/scan10mil");
+
+        group.throughput(Throughput::Elements(NUM_BATCHES as u64 * 2048 * 3));
+
+        group.bench_function(
+            if cfg!(all(feature = "avx512", target_feature = "avx512vpopcntdq")) {
+                "avx512 popcnt"
+            } else {
+                "scalar popcnt"
+            },
+            |b| {
+                b.iter(|| {
+                    let mut kernel = CpuMatcher::<U2048, U3>::new(&needles24_data, 31);
+                    let mut matched = false;
+                    for batch in batches.iter() {
+                        matched |= kernel.scan(batch);
+                    }
+                    assert!(!matched);
+                    matched
+                });
+            },
+        );
+    }
+
+    {
+        let mut group = c.benchmark_group("32needles/scan10mil");
+
+        group.throughput(Throughput::Elements(NUM_BATCHES as u64 * 2048 * 4));
+
+        group.bench_function(
+            if cfg!(all(feature = "avx512", target_feature = "avx512vpopcntdq")) {
+                "avx512 popcnt"
+            } else {
+                "scalar popcnt"
+            },
+            |b| {
+                b.iter(|| {
+                    let mut kernel = CpuMatcher::<U2048, U4>::new(&needles32_data, 31);
+                    let mut matched = false;
+                    for batch in batches.iter() {
+                        matched |= kernel.scan(batch);
+                    }
+                    assert!(!matched);
+                    matched
+                });
+            },
+        );
     }
 
     {
@@ -136,11 +228,10 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             },
             |b| {
                 b.iter(|| {
-                    let mut kernel =
-                        CpuMatcher::new(unsafe { core::mem::transmute(&needles_data) }, 31);
+                    let mut kernel = CpuMatcher::<U2048, U1>::new(&needles_data, 31);
                     let mut sum = 0;
                     for batch in batches.iter() {
-                        kernel.find(unsafe { core::mem::transmute(batch) }, |i, j| {
+                        kernel.find(batch, |i, j| {
                             sum += i + j;
                             // it is very important to return Some(()) here,
                             // to make sure the compiler don't collapse the branch in the hot loop
@@ -202,13 +293,13 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
             group.bench_function("vulkan", |b| {
                 b.iter(|| {
                     let mut sum = 0;
-                    gpu_kernel0.find(unsafe { core::mem::transmute(&needles_data) }, |i, j| {
+                    gpu_kernel0.find(&needles_data, |i, j| {
                         sum += i + j;
                         // it is very important to return Some(()) here,
                         // to make sure the compiler don't collapse the branch in the hot loop
                         Some(())
                     });
-                    gpu_kernel1.find(unsafe { core::mem::transmute(&needles_data) }, |i, j| {
+                    gpu_kernel1.find(&needles_data, |i, j| {
                         sum += i + j;
                         // it is very important to return Some(()) here,
                         // to make sure the compiler don't collapse the branch in the hot loop
@@ -219,6 +310,93 @@ fn bench_pdq_popcnt(c: &mut Criterion) {
                 });
             });
         }
+    }
+
+    {
+        let mut group = c.benchmark_group("16needles/find10mil");
+
+        group.throughput(Throughput::Elements(NUM_BATCHES as u64 * 2048 * 2));
+
+        group.bench_function(
+            if cfg!(all(feature = "avx512", target_feature = "avx512vpopcntdq")) {
+                "avx512 popcnt"
+            } else {
+                "scalar popcnt"
+            },
+            |b| {
+                b.iter(|| {
+                    let mut kernel = CpuMatcher::<U2048, U2>::new(&needles16_data, 31);
+                    let mut sum = 0;
+                    for batch in batches.iter() {
+                        kernel.find(batch, |i, j| {
+                            sum += i + j;
+                            // it is very important to return Some(()) here,
+                            // to make sure the compiler don't collapse the branch in the hot loop
+                            Some(())
+                        });
+                    }
+                    sum
+                });
+            },
+        );
+    }
+
+    {
+        let mut group = c.benchmark_group("24needles/find10mil");
+
+        group.throughput(Throughput::Elements(NUM_BATCHES as u64 * 2048 * 3));
+
+        group.bench_function(
+            if cfg!(all(feature = "avx512", target_feature = "avx512vpopcntdq")) {
+                "avx512 popcnt"
+            } else {
+                "scalar popcnt"
+            },
+            |b| {
+                b.iter(|| {
+                    let mut kernel = CpuMatcher::<U2048, U3>::new(&needles24_data, 31);
+                    let mut sum = 0;
+                    for batch in batches.iter() {
+                        kernel.find(batch, |i, j| {
+                            sum += i + j;
+                            // it is very important to return Some(()) here,
+                            // to make sure the compiler don't collapse the branch in the hot loop
+                            Some(())
+                        });
+                    }
+                    sum
+                });
+            },
+        );
+    }
+
+    {
+        let mut group = c.benchmark_group("32needles/find10mil");
+
+        group.throughput(Throughput::Elements(NUM_BATCHES as u64 * 2048 * 4));
+
+        group.bench_function(
+            if cfg!(all(feature = "avx512", target_feature = "avx512vpopcntdq")) {
+                "avx512 popcnt"
+            } else {
+                "scalar popcnt"
+            },
+            |b| {
+                b.iter(|| {
+                    let mut kernel = CpuMatcher::<U2048, U4>::new(&needles32_data, 31);
+                    let mut sum = 0;
+                    for batch in batches.iter() {
+                        kernel.find(batch, |i, j| {
+                            sum += i + j;
+                            // it is very important to return Some(()) here,
+                            // to make sure the compiler don't collapse the branch in the hot loop
+                            Some(())
+                        });
+                    }
+                    sum
+                });
+            },
+        );
     }
 }
 

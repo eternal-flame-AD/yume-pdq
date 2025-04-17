@@ -42,6 +42,7 @@ extern crate alloc;
 pub use const_default::{self, ConstDefault};
 pub use generic_array::{self, GenericArray};
 pub use num_traits;
+pub use zeroize;
 
 use kernel::{
     Kernel,
