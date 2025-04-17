@@ -34,7 +34,8 @@ These are considered security vulnerabilities:
 - **Denial of service**: Infinite loops, significant performance degradation caused by crafted input, etc.
     - Large, risky stack allocations inside API functions that may trigger a stack overflow is considered a denial of service.
 - **Information leak**: Unintended disclosure of memory, pointer addresses, files, or other resources.
-- **Memory corruption**: Undefined behavior, buffer overflows, write-after-free, use-after-free, etc.
+- **Undefined behavior**:  buffer overflows, use-after-free, reads and writes to out-of-bound memory, etc.
+    - Reads up to 1 SIMD lane width out of bound whose results are not observable in any output are considered bugs (because they may cause a processor exception), not security vulnerabilities.
 - **Bypass of security mitigations**: Circumventing protections like Control Flow Integrity (CFI), Address Space Layout Randomization (ASLR), or Non-Executable (NX) memory regions.
     - In particular, we consider a CFI bypass resulting in successful arbitrary code execution to be a vulnerability, even if the initial memory corruption is caused by a plausible caller error, such as an artificially induced heap or stack overflow.
 
