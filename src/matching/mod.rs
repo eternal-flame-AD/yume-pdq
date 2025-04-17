@@ -255,7 +255,7 @@ impl PDQMatcher for CpuMatcher {
             GenericArray<GenericArray<u8, Self::InputDimension>, Self::BatchSize>,
         >,
     ) -> bool {
-        use core::arch::x86_64::{_mm512_kortestz, _mm512_store_epi64};
+        use core::arch::x86_64::_mm512_store_epi64;
 
         use crate::alignment::Align64;
         unsafe {
@@ -426,6 +426,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_tzcnt_loop_always_terminates() {
         use core::arch::x86_64::_tzcnt_u16;
 
