@@ -25,6 +25,8 @@ use core::{
     ops::{BitAnd, BitOr, Mul},
 };
 
+#[allow(unused_imports)]
+use crate::alignment::AlignerTo;
 use generic_array::{
     ArrayLength,
     typenum::{B0, B1, Bit, UInt},

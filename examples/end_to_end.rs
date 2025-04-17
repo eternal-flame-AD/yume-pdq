@@ -5,13 +5,13 @@
 use generic_array::{
     GenericArray,
     sequence::Flatten,
-    typenum::{U32, U512, U2048},
+    typenum::{U1, U32, U512, U2048},
 };
 use image::{DynamicImage, imageops};
 use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use yume_pdq::{
     PDQHash,
-    alignment::Align8,
+    alignment::{Align8, calloc_generic_array_2d},
     kernel::{Kernel, SquareGenericArrayExt},
     matching::{CpuMatcher, PDQMatcher},
 };
@@ -51,17 +51,12 @@ fn main() {
     // now let's try to put the original, untransformed, official hash in a "database" and get it back
     // the cpu matcher lookup in 2048 chunks, in reality you would repeat the last entry until you have whole chunks
     // (this also allows you to do in-place insertion or deletion by substitution)
-    let mut database = Vec::new();
+    let mut database = core::array::from_fn::<_, 2, _>(|_chunk| {
+        calloc_generic_array_2d::<u8, Align8<_>, U2048, U32>()
+    });
     let insertion_index = rng.random_range(0..4096);
     for chunk_index in 0..2 {
-        let mut chunk = Align8::lift_boxed(
-            GenericArray::<_, U2048>::try_from_vec(vec![
-                Align8(GenericArray::<u8, U32>::default());
-                2048
-            ])
-            .unwrap(),
-        );
-
+        let chunk = &mut database[chunk_index];
         for i in 0..2048 {
             if i + chunk_index * 2048 == insertion_index {
                 chunk[i] = GenericArray::from_array(official_hash);
@@ -71,7 +66,6 @@ fn main() {
                 chunk[i] = random;
             }
         }
-        database.push(chunk);
     }
 
     // let's generate our own hash
@@ -244,7 +238,7 @@ fn main() {
 
     // now we can use the matcher to find the hash, the official threshold is 31 but we use 15 here to be stricter
     let mut matcher =
-        CpuMatcher::new_nested(GenericArray::from_slice(all_dihedrals.as_slice()), 15);
+        CpuMatcher::<U2048, U1>::new_nested(GenericArray::from_slice(all_dihedrals.as_slice()), 15);
     let mut found_at = None;
     for (chunk_index, chunk) in database.iter().enumerate() {
         matcher.find(chunk, |haystack_index, needle_index| {
