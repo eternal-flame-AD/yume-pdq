@@ -445,7 +445,7 @@ fn bench_hash(c: &mut Criterion) {
 fn bench_hash_par(c: &mut Criterion) {
     let mut rng = rand::rng();
 
-    const INPUT_PER_ROUND: usize = 1024;
+    const INPUT_PER_ROUND: usize = 256;
 
     for (nt, name) in [(4, "hashx4"), (8, "hashx8")] {
         let mut group = c.benchmark_group(name);
@@ -456,7 +456,6 @@ fn bench_hash_par(c: &mut Criterion) {
             .build()
             .unwrap();
 
-        group.sample_size(24);
         group.throughput(criterion::Throughput::Elements(INPUT_PER_ROUND as _));
 
         group.bench_function("reference", |b| {
