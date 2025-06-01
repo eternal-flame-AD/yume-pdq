@@ -113,6 +113,8 @@ extern const struct YumePDQ_Dihedrals YUME_PDQ_DIHEDRAL_ROTATED_90_FLOPPED;
  * - `tmp` is in/out, must be a pointer to a 128x1 array of f32 values as scratch space for the DCT transform.
  * - `pdqf` is out only, must be a pointer to a 16x16 array of f32 values to receive PDQF (unquantized) hash values.
  *
+ * No buffer should overlap.
+ *
  * # Returns
  *
  * The quality of the hash as a f32 value between 0.0 and 1.0. You are responsible for checking whether quality is acceptable.
@@ -134,6 +136,8 @@ float yume_pdq_hash_smart_kernel(const float *input,
  * - `output` is out only, must be a pointer to a 2x16 array of u8 to receive any intermediate 256-bit hash. It does not have to be initialized to any particular value.
  * - `pdqf` is in/out, must be a pointer to a 16x16 array of f32 values of the initial PDQF data, and be writable to receive derived PDQF (unquantized) hash values.
  * - `callback` must be a valid callback function that will be called for each dihedral.
+ *
+ * No buffer should overlap.
  *
  * # Returns
  *
