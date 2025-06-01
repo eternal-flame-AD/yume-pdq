@@ -13,7 +13,7 @@
         "hpc"
     ],
     "C_Cpp.default.includePath": [
-        "crates/yume-pdq-recall-bench/vendor/ThreatExchange"
+        "vendor/ThreatExchange"
     ],
     "psi-header.config": {
         "license": "Custom"
@@ -149,6 +149,24 @@
         "sha256.h": "c",
         "example_number_input_scene_config.h": "c",
         "rope": "cpp",
-        "slist": "cpp"
+        "slist": "cpp",
+        "strstream": "cpp",
+        "barrier": "cpp",
+        "cfenv": "cpp",
+        "csignal": "cpp",
+        "cuchar": "cpp",
+        "forward_list": "cpp",
+        "expected": "cpp",
+        "netfwd": "cpp",
+        "source_location": "cpp",
+        "generator": "cpp",
+        "latch": "cpp",
+        "print": "cpp",
+        "scoped_allocator": "cpp",
+        "shared_mutex": "cpp",
+        "spanstream": "cpp",
+        "stacktrace": "cpp",
+        "syncstream": "cpp",
+        "typeindex": "cpp"
     }
 }

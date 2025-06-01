@@ -93,6 +93,3 @@ name = "yume-pdq"
 path = "src/main.rs"
 required-features = ["cli"]
 
-
-[workspace]
-members = ["crates/yume-pdq-recall-bench"]

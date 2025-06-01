@@ -458,7 +458,7 @@ mod tests {
     }
 
     fn test_scan_cpu_impl<N: ArrayLength + IsLessOrEqual<U8, Output = B1>>() {
-        let mut rng = rand::rng();
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(u64::from_be_bytes(*b"yume-pdq"));
 
         // Generate random needles
         let mut needles_data = GenericArray::<GenericArray<u8, U32>, Times8<N>>::default();
@@ -499,7 +499,7 @@ mod tests {
 
         kernel.find(&haystack_data, |_, i| {
             panic!("Found match at index {}", i);
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code)]
             Some(i)
         });
 

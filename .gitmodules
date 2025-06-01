@@ -1,3 +1,0 @@
-[submodule "crates/yume-pdq-recall-bench/vendor/ThreatExchange"]
-	path = crates/yume-pdq-recall-bench/vendor/ThreatExchange
-	url = https://github.com/facebook/ThreatExchange
