@@ -449,7 +449,7 @@ assert!(
 
 ## Contributing and Feature Wishlist
 
-Contributions are welcome!
+Contributions are welcome! I am also open to onboarding new maintainers, please contact me at [yume@yumechi.jp](mailto:yume@yumechi.jp) if you are interested.
 
 - [ ] Distribute fat binaries that just work out of the box using the most efficient instruction set at runtime.
 - [ ] Provide high level APIs that is intuitive and easy to use without negating most of the performance benefits of the low level API.
@@ -457,7 +457,7 @@ Contributions are welcome!
 
 ## License and attributions
 
-This crate is licensed under the Apache 2.0 license with the EXCEPTION that when built with `reference-rug` feature _and_ under static linking builds (musl, etc.) you may be bound by LGPLv3 license due to introducing a statically linked dependency to GMP.
+This crate is can be unconditionally licensed or derived under the Apache 2.0 license with the EXCEPTION that when built with `reference-rug` feature, for these users you should refer to the [NOTICE](NOTICE) file for more details.
 
 Special thanks to [@darwinium-com](https://github.com/darwinium-com) for their [pdqhash](https://crates.io/crates/pdqhash) crate, which was a great source of inspiration and the reference kernel
 was ~~shamelessly~~ copied almost verbatim from them.

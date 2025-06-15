@@ -1,0 +1,20 @@
+While this crate is licensed under the Apache 2.0 license, certain non-standard build configurations may impose additional licensing requirements.
+
+Specifically, you may be subject to the terms of the GNU Lesser General Public
+License, Version 3.0 (LGPL-3.0) under the following conditions:
+
+1.  If you compile this software with the `reference-rug` feature enabled,
+    AND
+2.  Your build configuration results in a static link to the GNU Multiple
+    Precision Arithmetic Library (GMP). This is common in environments that
+    use static linking by default, such as when targeting `musl` or `uclibc`.
+
+Under these circumstances, your derivative work may be bound by the terms of the LGPL-3.0.
+For full compliance, you should consult the license terms for the `rug` and `gmp-mpfr-sys` crates,
+as well as license terms of the underlying GNU MPFR and GMP libraries.
+
+These features are not enabled by default and are not used in any pre-compiled
+official binary releases of this project. They are provided to the community 
+under a compatible API primarily for convenience for testing and validation purposes. 
+It is your responsibility to understand and comply with the licensing terms of all 
+components included in your final build.
