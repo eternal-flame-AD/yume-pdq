@@ -5,7 +5,9 @@
 
 Optimized kernels from hashing to vectorized or Vulkan shader-based exact matching for near real-time high-throughput high-recall [PDQ](https://github.com/facebook/ThreatExchange/tree/main/pdq)-based image screening, including a hand-vectorized PDQ variant that prioritizes low latency, high throughput with high statistical compatibility, with options of using AVX2 intrinsics, portable-simd, or AVX512 intrinsics, with no-std and LLVM SafeStack+CFI hardening support.
 
-It also comes with a well-optimized matching pipeline that guarantees 100% recall, bringing the total time-on-processor down to <1ms when a Consumer-grade Vulkan GPU is used for the matching stage, or ~20ms when an AVX512 CPU is used for the whole task. (Assuming a 10M vector database, larger than the current size of the NCMEC CSAM PDQ database.)
+It also comes with a well-optimized matching pipeline that guarantees 100% recall, bringing the total CPU time down to ~20ms when an AVX512 CPU is used for the entire hash then search task. (Assuming a 10M vector database)
+
+An C++ port of the AVX-512 matching pipeline has been merged into the official repository, see [facebook/ThreatExchange#1817](https://github.com/facebook/ThreatExchange/pull/1817) for details.
 
 [Try it on WASM now!](https://eternal-flame-ad.github.io/yume-pdq/)
 
@@ -35,6 +37,7 @@ It also comes with a well-optimized matching pipeline that guarantees 100% recal
       - [On test set](#on-test-set)
       - [On real moderation images (NCMEC NPO CSAM database)](#on-real-moderation-images-ncmec-npo-csam-database)
   - [API Usage (and dihedral transformations)](#api-usage-and-dihedral-transformations)
+  - [Contributing and Feature Wishlist](#contributing-and-feature-wishlist)
   - [License and attributions](#license-and-attributions)
 
 ## Design Goals
@@ -444,6 +447,13 @@ assert!(
 );
 ```
 
+## Contributing and Feature Wishlist
+
+Contributions are welcome!
+
+- [ ] Distribute fat binaries that just work out of the box using the most efficient instruction set at runtime.
+- [ ] Provide high level APIs that is intuitive and easy to use without negating most of the performance benefits of the low level API.
+- [ ] Objective and large scale recall benchmarks using programmatic image manipulation (we can use off the shelf AI image training data)
 
 ## License and attributions
 
