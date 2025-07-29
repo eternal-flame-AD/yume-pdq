@@ -38,9 +38,7 @@ use crate::{
 use super::{
     CONVOLUTION_OFFSET_512_TO_127, DCT_MATRIX_RMAJOR, QUALITY_ADJUST_DIVISOR,
     TENT_FILTER_COLUMN_OFFSET, TENT_FILTER_EFFECTIVE_ROWS, TENT_FILTER_WEIGHTS_X8,
-    type_traits::{
-        EvaluateHardwareFeature, RequireCompilerTimeHardwareFeature, kernel_sealing::KernelSealed,
-    },
+    type_traits::{EvaluateHardwareFeature, kernel_sealing::KernelSealed},
 };
 
 const CPUID_REG_EBX: u8 = 0x00;
@@ -98,12 +96,36 @@ macro_rules! define_x8664_cpuid {
     };
 }
 
-define_x8664_cpuid!("fma", 1, 0, CPUID_REG_ECX, 12);
+impl EvaluateHardwareFeature for X8664CPUID<1, 0, CPUID_REG_ECX, 12> {
+    type EnabledStatic = B1;
+    type MustCheck = B1;
+    type Name = &'static str;
+
+    fn name() -> Self::Name {
+        "fma"
+    }
+
+    fn met_runtime() -> bool {
+        Self::test_runtime()
+    }
+}
 
 /// Type alias for FMA feature.
 pub type CpuIdFma = X8664CPUID<1, 0, CPUID_REG_ECX, 12>;
 
-define_x8664_cpuid!("avx2", 7, 0, CPUID_REG_EBX, 5);
+impl EvaluateHardwareFeature for X8664CPUID<7, 0, CPUID_REG_EBX, 5> {
+    type EnabledStatic = B1;
+    type MustCheck = B1;
+    type Name = &'static str;
+
+    fn name() -> Self::Name {
+        "avx2"
+    }
+
+    fn met_runtime() -> bool {
+        Self::test_runtime()
+    }
+}
 
 /// Type alias for AVX2 feature.
 pub type CpuIdAvx2 = X8664CPUID<7, 0, CPUID_REG_EBX, 5>;
@@ -134,7 +156,8 @@ pub type CpuIdAvx512Vpopcntdq = X8664CPUID<7, 0, CPUID_REG_ECX, 14>;
 pub struct Avx2F32Kernel;
 
 impl Avx2F32Kernel {
-    #[inline(always)]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     pub(crate) fn dct2d_impl<P: ArrayLength + IsGreaterOrEqual<U8>>(
         dct_matrix_rmajor: &DefaultPaddedArray<f32, super::DctMatrixNumElements, P>,
         buffer: &GenericArray<GenericArray<f32, U128>, U128>,
@@ -317,183 +340,14 @@ impl Avx2F32Kernel {
             // crate::testing::dump_image("step_by_step/dct2d/avx2/output.ppm", output);
         }
     }
-}
 
-unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: ArrayLength>(
-    buffer: &GenericArray<GenericArray<f32, U512>, U512>,
-    output: &mut GenericArray<GenericArray<f32, Buffer1WidthX>, Buffer1LengthY>,
-) {
-    unsafe {
-        // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
-        let mut out_buffer = Align32([0.0; 8]);
-
-        // little endian:                               [7] [6] [5] [4] [3] [2] [1] [0]
-        // intended index: [-1, 0, 1, 2, 3, 4, 5, 6] -> [0,  1,  2,  3,  4,  5,  6,  7]
-        // the last one is not important (padded into zero by FMA)
-        let shiftl1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
-
-        for outi in 0..127 {
-            let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
-            for outj in 0..127 {
-                let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
-                let mut sum = _mm256_setzero_ps();
-                for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
-                    let mut offset = (in_i + di) * 512 + in_j;
-
-                    // rewind one element to avoid out of bounds access
-                    if di == 6 && outi == 126 && outj == 126 {
-                        offset -= 1;
-                    }
-
-                    debug_assert!(
-                        offset <= 512 * 512 - 8,
-                        "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
-                        offset,
-                        512 * 512 - 8,
-                        in_i,
-                        in_j,
-                        di,
-                        outi,
-                        outj
-                    );
-
-                    let mut buffer = _mm256_loadu_ps(buffer.flatten().as_ptr().add(offset));
-
-                    // shift back one element
-                    if di == 6 && outi == 126 && outj == 126 {
-                        buffer = _mm256_permutevar8x32_ps(buffer, shiftl1);
-                    }
-
-                    let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
-                    sum = _mm256_fmadd_ps(buffer, weights, sum);
-                }
-                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
-                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
-                _mm256_store_ps(out_buffer.0.as_mut_ptr(), sum);
-                output[outi][outj] = out_buffer.0[0] + out_buffer.0[4];
-            }
-        }
-        // crate::testing::dump_image("step_by_step/compress/avx2/output.ppm", output);
-    }
-}
-
-#[inline]
-fn cvt_rgba8_to_luma8f_avx2<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-    input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, U512>,
-    output: &mut GenericArray<f32, U512>,
-) {
-    unsafe {
-        let mut in_offset = 0;
-        let mut out_offset = 0;
-        let coeff_r = _mm256_set1_ps(f32::from_ne_bytes(R_COEFF.to_ne_bytes()));
-        let coeff_g = _mm256_set1_ps(f32::from_ne_bytes(G_COEFF.to_ne_bytes()));
-        let coeff_b = _mm256_set1_ps(f32::from_ne_bytes(B_COEFF.to_ne_bytes()));
-
-        macro_rules! do_loop {
-            (8) => {
-                // 8 pixels in 32 bytes, place into exactly 8 output elements (1 lane)
-                // note this is little endian, so the ordering is pretty unintuitive
-                let data = _mm256_loadu_si256(input.as_ptr().cast::<u8>().add(in_offset).cast());
-                let mask32 = _mm256_set1_epi32(0x000000FF);
-                let output_r = _mm256_cvtepi32_ps(_mm256_and_si256(data, mask32));
-                let output_g =
-                    _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<8>(data), mask32));
-                let output_b =
-                    _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<16>(data), mask32));
-                let mut output_v = _mm256_mul_ps(output_r, coeff_r);
-                output_v = _mm256_fmadd_ps(output_g, coeff_g, output_v);
-                output_v = _mm256_fmadd_ps(output_b, coeff_b, output_v);
-                _mm256_storeu_ps(output.as_mut_ptr().add(out_offset), output_v);
-            };
-            (16) => {
-                do_loop!(8);
-                in_offset += 32;
-                out_offset += 8;
-                do_loop!(8);
-            };
-            (32) => {
-                do_loop!(16);
-                in_offset += 32;
-                out_offset += 8;
-                do_loop!(16);
-            };
-            (64) => {
-                do_loop!(32);
-                in_offset += 32;
-                out_offset += 8;
-                do_loop!(32);
-            };
-            (128) => {
-                do_loop!(64);
-                in_offset += 32;
-                out_offset += 8;
-                do_loop!(64);
-            };
-            (256) => {
-                do_loop!(128);
-                in_offset += 32;
-                out_offset += 8;
-                do_loop!(128);
-            };
-            (512) => {
-                do_loop!(256);
-                in_offset += 32;
-                out_offset += 8;
-                do_loop!(256);
-            };
-        }
-
-        do_loop!(512);
-    }
-}
-
-impl Kernel for Avx2F32Kernel {
-    type Buffer1WidthX = U128;
-    type Buffer1LengthY = U128;
-    type InternalFloat = f32;
-    type InputDimension = U512;
-    type OutputDimension = U16;
-    type RequiredHardwareFeature = RequireCompilerTimeHardwareFeature<CpuIdAvx2, CpuIdFma>;
-    type Ident = &'static str;
-
-    fn ident(&self) -> &'static str {
-        "avx2_f32"
-    }
-
-    #[inline]
-    fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
-        &mut self,
-        input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
-        output: &mut GenericArray<f32, Self::InputDimension>,
-    ) {
-        cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    fn adjust_quality(input: Self::InternalFloat) -> f32 {
-        let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
-
-        scaled.min(1.0)
-    }
-
-    fn jarosz_compress(
-        &mut self,
-        buffer: &GenericArray<GenericArray<f32, Self::InputDimension>, Self::InputDimension>,
-        output: &mut GenericArray<
-            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
-            Self::Buffer1LengthY,
-        >,
-    ) {
-        unsafe {
-            jarosz_compress_avx2(buffer, output);
-        }
-    }
-
-    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
+    fn pdqf_negate_alt_rows_impl<const NEGATE: bool>(
         &mut self,
         input: &mut GenericArray<
-            GenericArray<Self::InternalFloat, Self::OutputDimension>,
-            Self::OutputDimension,
+            GenericArray<<Self as Kernel>::InternalFloat, <Self as Kernel>::OutputDimension>,
+            <Self as Kernel>::OutputDimension,
         >,
     ) {
         unsafe {
@@ -532,11 +386,13 @@ impl Kernel for Avx2F32Kernel {
         }
     }
 
-    fn pdqf_negate_alt_cols<const NEGATE: bool>(
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
+    fn pdqf_negate_alt_cols_impl<const NEGATE: bool>(
         &mut self,
         input: &mut GenericArray<
-            GenericArray<Self::InternalFloat, Self::OutputDimension>,
-            Self::OutputDimension,
+            GenericArray<<Self as Kernel>::InternalFloat, <Self as Kernel>::OutputDimension>,
+            <Self as Kernel>::OutputDimension,
         >,
     ) {
         unsafe {
@@ -580,11 +436,13 @@ impl Kernel for Avx2F32Kernel {
         }
     }
 
-    fn pdqf_negate_off_diagonals(
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
+    fn pdqf_negate_off_diagonals_impl(
         &mut self,
         input: &mut GenericArray<
-            GenericArray<Self::InternalFloat, Self::OutputDimension>,
-            Self::OutputDimension,
+            GenericArray<<Self as Kernel>::InternalFloat, <Self as Kernel>::OutputDimension>,
+            <Self as Kernel>::OutputDimension,
         >,
     ) {
         unsafe {
@@ -638,37 +496,12 @@ impl Kernel for Avx2F32Kernel {
         }
     }
 
-    fn sum_of_gradients(
-        &mut self,
-        input: &GenericArray<GenericArray<Self::InternalFloat, U16>, U16>,
-    ) -> Self::InternalFloat {
-        let mut gradient_sum = Default::default();
-
-        for i in 0..(16 - 1) {
-            for j in 0..16 {
-                let u = input[i][j];
-                let v = input[i + 1][j];
-                let d = u - v;
-                gradient_sum += d.abs();
-            }
-        }
-
-        for i in 0..16 {
-            for j in 0..(16 - 1) {
-                let u = input[i][j];
-                let v = input[i][j + 1];
-                let d = u - v;
-                gradient_sum += d.abs();
-            }
-        }
-
-        gradient_sum
-    }
-
-    fn quantize(
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
+    fn quantize_impl(
         &mut self,
         input: &GenericArray<GenericArray<f32, U16>, U16>,
-        threshold: &mut Self::InternalFloat,
+        threshold: &mut <Self as Kernel>::InternalFloat,
         output: &mut GenericArray<GenericArray<u8, U2>, U16>,
     ) {
         let mut out_buffer = Align32([0.0; 8]);
@@ -847,6 +680,260 @@ impl Kernel for Avx2F32Kernel {
         } // unsafe
         // crate::testing::dump_image("step_by_step/quantize/avx2/output.ppm", output);
     }
+}
+
+#[cfg_attr(target_feature = "avx2", inline)]
+#[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
+unsafe fn jarosz_compress_avx2<Buffer1WidthX: ArrayLength, Buffer1LengthY: ArrayLength>(
+    buffer: &GenericArray<GenericArray<f32, U512>, U512>,
+    output: &mut GenericArray<GenericArray<f32, Buffer1WidthX>, Buffer1LengthY>,
+) {
+    unsafe {
+        // crate::testing::dump_image("step_by_step/compress/avx2/input.ppm", buffer);
+        let mut out_buffer = Align32([0.0; 8]);
+
+        // little endian:                               [7] [6] [5] [4] [3] [2] [1] [0]
+        // intended index: [-1, 0, 1, 2, 3, 4, 5, 6] -> [0,  1,  2,  3,  4,  5,  6,  7]
+        // the last one is not important (padded into zero by FMA)
+        let shiftl1 = _mm256_set_epi32(7, 7, 6, 5, 4, 3, 2, 1);
+
+        for outi in 0..127 {
+            let in_i = CONVOLUTION_OFFSET_512_TO_127[outi] - TENT_FILTER_COLUMN_OFFSET;
+            for outj in 0..127 {
+                let in_j = CONVOLUTION_OFFSET_512_TO_127[outj] - TENT_FILTER_COLUMN_OFFSET;
+                let mut sum = _mm256_setzero_ps();
+                for di in 0..TENT_FILTER_EFFECTIVE_ROWS {
+                    let mut offset = (in_i + di) * 512 + in_j;
+
+                    // rewind one element to avoid out of bounds access
+                    if di == 6 && outi == 126 && outj == 126 {
+                        offset -= 1;
+                    }
+
+                    debug_assert!(
+                        offset <= 512 * 512 - 8,
+                        "offset out of bounds: {} is invalid, last valid offset is {}, in_i: {}, in_j: {}, di: {}, outi: {}, outj: {}",
+                        offset,
+                        512 * 512 - 8,
+                        in_i,
+                        in_j,
+                        di,
+                        outi,
+                        outj
+                    );
+
+                    let mut buffer = _mm256_loadu_ps(buffer.flatten().as_ptr().add(offset));
+
+                    // shift back one element
+                    if di == 6 && outi == 126 && outj == 126 {
+                        buffer = _mm256_permutevar8x32_ps(buffer, shiftl1);
+                    }
+
+                    let weights = _mm256_loadu_ps(TENT_FILTER_WEIGHTS_X8.as_ptr().add(di * 8));
+                    sum = _mm256_fmadd_ps(buffer, weights, sum);
+                }
+                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                sum = _mm256_hadd_ps(sum, _mm256_setzero_ps());
+                _mm256_store_ps(out_buffer.0.as_mut_ptr(), sum);
+                output[outi][outj] = out_buffer.0[0] + out_buffer.0[4];
+            }
+        }
+        // crate::testing::dump_image("step_by_step/compress/avx2/output.ppm", output);
+    }
+}
+
+#[cfg_attr(target_feature = "avx2", inline)]
+#[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
+fn cvt_rgba8_to_luma8f_avx2<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+    input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, U512>,
+    output: &mut GenericArray<f32, U512>,
+) {
+    unsafe {
+        let mut in_offset = 0;
+        let mut out_offset = 0;
+        let coeff_r = _mm256_set1_ps(f32::from_ne_bytes(R_COEFF.to_ne_bytes()));
+        let coeff_g = _mm256_set1_ps(f32::from_ne_bytes(G_COEFF.to_ne_bytes()));
+        let coeff_b = _mm256_set1_ps(f32::from_ne_bytes(B_COEFF.to_ne_bytes()));
+
+        macro_rules! do_loop {
+            (8) => {
+                // 8 pixels in 32 bytes, place into exactly 8 output elements (1 lane)
+                // note this is little endian, so the ordering is pretty unintuitive
+                let data = _mm256_loadu_si256(input.as_ptr().cast::<u8>().add(in_offset).cast());
+                let mask32 = _mm256_set1_epi32(0x000000FF);
+                let output_r = _mm256_cvtepi32_ps(_mm256_and_si256(data, mask32));
+                let output_g =
+                    _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<8>(data), mask32));
+                let output_b =
+                    _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srli_epi32::<16>(data), mask32));
+                let mut output_v = _mm256_mul_ps(output_r, coeff_r);
+                output_v = _mm256_fmadd_ps(output_g, coeff_g, output_v);
+                output_v = _mm256_fmadd_ps(output_b, coeff_b, output_v);
+                _mm256_storeu_ps(output.as_mut_ptr().add(out_offset), output_v);
+            };
+            (16) => {
+                do_loop!(8);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(8);
+            };
+            (32) => {
+                do_loop!(16);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(16);
+            };
+            (64) => {
+                do_loop!(32);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(32);
+            };
+            (128) => {
+                do_loop!(64);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(64);
+            };
+            (256) => {
+                do_loop!(128);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(128);
+            };
+            (512) => {
+                do_loop!(256);
+                in_offset += 32;
+                out_offset += 8;
+                do_loop!(256);
+            };
+        }
+
+        do_loop!(512);
+    }
+}
+
+impl Kernel for Avx2F32Kernel {
+    type Buffer1WidthX = U128;
+    type Buffer1LengthY = U128;
+    type InternalFloat = f32;
+    type InputDimension = U512;
+    type OutputDimension = U16;
+    type RequiredHardwareFeature = CpuIdAvx2;
+    type Ident = &'static str;
+
+    fn ident(&self) -> &'static str {
+        "avx2_f32"
+    }
+
+    #[inline]
+    fn cvt_rgba8_to_luma8f<const R_COEFF: u32, const G_COEFF: u32, const B_COEFF: u32>(
+        &mut self,
+        input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
+        output: &mut GenericArray<f32, Self::InputDimension>,
+    ) {
+        #[allow(unused_unsafe)]
+        unsafe {
+            cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn adjust_quality(input: Self::InternalFloat) -> f32 {
+        let scaled = input / (QUALITY_ADJUST_DIVISOR as f32);
+
+        scaled.min(1.0)
+    }
+
+    fn jarosz_compress(
+        &mut self,
+        buffer: &GenericArray<GenericArray<f32, Self::InputDimension>, Self::InputDimension>,
+        output: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::Buffer1WidthX>,
+            Self::Buffer1LengthY,
+        >,
+    ) {
+        #[allow(unused_unsafe)]
+        unsafe {
+            jarosz_compress_avx2(buffer, output);
+        }
+    }
+
+    fn pdqf_negate_alt_rows<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            self.pdqf_negate_alt_rows_impl::<NEGATE>(input);
+        }
+    }
+
+    fn pdqf_negate_alt_cols<const NEGATE: bool>(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        unsafe {
+            self.pdqf_negate_alt_cols_impl::<NEGATE>(input);
+        }
+    }
+
+    fn pdqf_negate_off_diagonals(
+        &mut self,
+        input: &mut GenericArray<
+            GenericArray<Self::InternalFloat, Self::OutputDimension>,
+            Self::OutputDimension,
+        >,
+    ) {
+        #[allow(unused_unsafe)]
+        unsafe {
+            self.pdqf_negate_off_diagonals_impl(input);
+        }
+    }
+
+    fn sum_of_gradients(
+        &mut self,
+        input: &GenericArray<GenericArray<Self::InternalFloat, U16>, U16>,
+    ) -> Self::InternalFloat {
+        let mut gradient_sum = Default::default();
+
+        for i in 0..(16 - 1) {
+            for j in 0..16 {
+                let u = input[i][j];
+                let v = input[i + 1][j];
+                let d = u - v;
+                gradient_sum += d.abs();
+            }
+        }
+
+        for i in 0..16 {
+            for j in 0..(16 - 1) {
+                let u = input[i][j];
+                let v = input[i][j + 1];
+                let d = u - v;
+                gradient_sum += d.abs();
+            }
+        }
+
+        gradient_sum
+    }
+
+    fn quantize(
+        &mut self,
+        input: &GenericArray<GenericArray<f32, U16>, U16>,
+        threshold: &mut Self::InternalFloat,
+        output: &mut GenericArray<GenericArray<u8, U2>, U16>,
+    ) {
+        #[allow(unused_unsafe)]
+        unsafe {
+            self.quantize_impl(input, threshold, output);
+        }
+    }
 
     // sum of gradients is a pretty auto-vectorizable operation (and benchmark shows the same performance), so we will let it do what it thinks is best for the target architecture
 
@@ -856,7 +943,10 @@ impl Kernel for Avx2F32Kernel {
         tmp_row_buffer: &mut GenericArray<f32, Self::Buffer1WidthX>,
         output: &mut GenericArray<GenericArray<f32, U16>, U16>,
     ) {
-        Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, tmp_row_buffer, output);
+        #[allow(unused_unsafe)]
+        unsafe {
+            Avx2F32Kernel::dct2d_impl(&DCT_MATRIX_RMAJOR, buffer, tmp_row_buffer, output);
+        }
     }
 }
 
@@ -874,7 +964,7 @@ impl Kernel for Avx512F32Kernel {
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
-    type RequiredHardwareFeature = RequireCompilerTimeHardwareFeature<
+    type RequiredHardwareFeature = crate::kernel::type_traits::RequireCompilerTimeHardwareFeature<
         CpuIdAvx512f,
         <Avx2F32Kernel as Kernel>::RequiredHardwareFeature,
     >;
@@ -900,7 +990,10 @@ impl Kernel for Avx512F32Kernel {
         input: &GenericArray<GenericArray<u8, generic_array::typenum::U4>, Self::InputDimension>,
         output: &mut GenericArray<f32, Self::InputDimension>,
     ) {
-        cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+        #[allow(unused_unsafe)]
+        unsafe {
+            cvt_rgba8_to_luma8f_avx2::<R_COEFF, G_COEFF, B_COEFF>(input, output);
+        }
     }
 
     fn pdqf_negate_off_diagonals(
@@ -1492,11 +1585,14 @@ mod tests {
         let blue_expect = constants::RGB8_TO_LUMA8_TABLE_ITU[2] as f32 * 255.0;
         let white_expect = 255.0;
 
-        cvt_rgba8_to_luma8f_avx2::<
-            { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[0].to_ne_bytes()) },
-            { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[1].to_ne_bytes()) },
-            { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[2].to_ne_bytes()) },
-        >(&row, &mut output);
+        #[allow(unused_unsafe)]
+        unsafe {
+            cvt_rgba8_to_luma8f_avx2::<
+                { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[0].to_ne_bytes()) },
+                { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[1].to_ne_bytes()) },
+                { u32::from_ne_bytes(constants::RGB8_TO_LUMA8_TABLE_ITU[2].to_ne_bytes()) },
+            >(&row, &mut output);
+        }
 
         output
             .iter()
