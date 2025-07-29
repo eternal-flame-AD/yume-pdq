@@ -866,6 +866,7 @@ impl Kernel for Avx2F32Kernel {
             Self::OutputDimension,
         >,
     ) {
+        #[allow(unused_unsafe)]
         unsafe {
             self.pdqf_negate_alt_rows_impl::<NEGATE>(input);
         }
@@ -878,6 +879,7 @@ impl Kernel for Avx2F32Kernel {
             Self::OutputDimension,
         >,
     ) {
+        #[allow(unused_unsafe)]
         unsafe {
             self.pdqf_negate_alt_cols_impl::<NEGATE>(input);
         }
