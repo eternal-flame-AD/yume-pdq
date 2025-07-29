@@ -1277,12 +1277,15 @@ mod tests {
             &mut output_ref,
         );
 
-        x86::Avx2F32Kernel::dct2d_impl(
-            &dct_matrix,
-            &input_buffer_128,
-            &mut GenericArray::default(),
-            &mut output,
-        );
+        #[allow(unused_unsafe)]
+        unsafe {
+            x86::Avx2F32Kernel::dct2d_impl(
+                &dct_matrix,
+                &input_buffer_128,
+                &mut GenericArray::default(),
+                &mut output,
+            );
+        }
 
         for i in 0..16 {
             for j in 0..16 {
@@ -1320,12 +1323,16 @@ mod tests {
             &mut GenericArray::default(),
             &mut output_ref,
         );
-        x86::Avx2F32Kernel::dct2d_impl(
-            &dct_matrix,
-            &input_buffer_128,
-            &mut GenericArray::default(),
-            &mut output,
-        );
+
+        #[allow(unused_unsafe)]
+        unsafe {
+            x86::Avx2F32Kernel::dct2d_impl(
+                &dct_matrix,
+                &input_buffer_128,
+                &mut GenericArray::default(),
+                &mut output,
+            );
+        }
 
         for i in 0..16 {
             for j in 0..16 {

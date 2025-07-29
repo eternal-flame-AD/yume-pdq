@@ -20,7 +20,6 @@
  * limitations under the License.
  */
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
-#![cfg_attr(feature = "avx512", feature(stdarch_x86_avx512))]
 #![cfg_attr(feature = "portable-simd", feature(portable_simd))]
 #![warn(missing_docs, clippy::pedantic)]
 #![allow(

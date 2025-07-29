@@ -20,6 +20,7 @@ An C++ port of the AVX-512 matching pipeline has been merged into the official r
   - [Design Goals](#design-goals)
   - [System Requirements](#system-requirements)
     - [Building](#building)
+      - [Advanced Builds](#advanced-builds)
     - [Execution](#execution)
     - [Profiling](#profiling)
   - [Releases](#releases)
@@ -67,9 +68,12 @@ No-std support.
 
 ### Building
 
-- Rust toolchain (2024 edition or newer (1.85.0 or newer))
-- To build for AVX2, you can use any Rust channel and only `RUSTFLAGS="-Ctarget-feature=+avx2,+fma"` is required.
-- To build for AVX512, you need a nightly toolchain, and your build platform must also have AVX512, and `--features avx512`, and `RUSTFLAGS="-Ctarget-feature=+avx512f"` is required.
+You need Rust toolchain (2024 edition or newer (1.85.0 or newer)).
+The generic build has a fallback scalar kernel that is always available and runtime dispatch for avx2+fma.
+
+#### Advanced Builds
+- To eliminate the runtime dispatch for avx2+fma, you can use any Rust channel and only `RUSTFLAGS="-Ctarget-feature=+avx2,+fma"` is required.
+- To build for AVX512, you need a 1.89+ toolchain, and your build platform must also have AVX512, and `--features avx512`, and `RUSTFLAGS="-Ctarget-feature=+avx512f"` is required.
 - To build for portable-simd, you need a nightly toolchain, and `--features portable-simd` is required.
 
 ### Execution
