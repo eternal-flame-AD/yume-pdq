@@ -32,7 +32,7 @@ use generic_array::{
 
 use crate::{
     alignment::{Align32, DefaultPaddedArray},
-    kernel::Kernel,
+    kernel::{Kernel, type_traits::RequireCompilerTimeHardwareFeature},
 };
 
 use super::{
@@ -41,47 +41,21 @@ use super::{
     type_traits::{EvaluateHardwareFeature, kernel_sealing::KernelSealed},
 };
 
-const CPUID_REG_EBX: u8 = 0x00;
-const CPUID_REG_ECX: u8 = 0x01;
+macro_rules! define_x8664_feature {
+    ($struct:ident, $has_runtime_dispatch:tt, $name:tt) => {
+        #[doc = concat!("CPUID feature: ", $name)]
+        pub struct $struct;
 
-/// Type-level CPUID flags for x86_64
-pub struct X8664CPUID<const LEAF: u32, const SUB_LEAF: u32, const REG: u8, const BIT: u8> {
-    _private: (),
-}
+        impl KernelSealed for $struct {}
 
-impl<const LEAF: u32, const SUB_LEAF: u32, const REG: u8, const BIT: u8> KernelSealed
-    for X8664CPUID<LEAF, SUB_LEAF, REG, BIT>
-{
-}
-
-impl<const LEAF: u32, const SUB_LEAF: u32, const REG: u8, const BIT: u8>
-    X8664CPUID<LEAF, SUB_LEAF, REG, BIT>
-{
-    #[inline]
-    fn test_runtime() -> bool {
-        // use intrinsics to check if the feature is supported instead of the is_x86_feature_detected macro
-        // because it does not work well with -Zsanitize options
-        unsafe {
-            let res = match REG {
-                CPUID_REG_EBX => __cpuid_count(LEAF, SUB_LEAF).ebx,
-                CPUID_REG_ECX => __cpuid_count(LEAF, SUB_LEAF).ecx,
-                _ => unreachable!(),
-            };
-            (1 << BIT) & res != 0
-        }
-    }
-}
-
-macro_rules! define_x8664_cpuid {
-    ($name:literal, $leaf:expr, $sub_leaf:expr, $reg:expr, $bit:expr) => {
-        impl EvaluateHardwareFeature for X8664CPUID<$leaf, $sub_leaf, $reg, $bit> {
+        impl EvaluateHardwareFeature for $struct {
             type Name = &'static str;
 
             #[cfg(target_feature = $name)]
             type EnabledStatic = B1;
 
             #[cfg(not(target_feature = $name))]
-            type EnabledStatic = B0;
+            type EnabledStatic = <B0 as core::ops::BitOr<$has_runtime_dispatch>>::Output;
 
             type MustCheck = B1;
 
@@ -90,55 +64,20 @@ macro_rules! define_x8664_cpuid {
             }
 
             fn met_runtime() -> bool {
-                Self::test_runtime()
+                cpufeatures::new!(checker, $name);
+                checker::get()
             }
         }
     };
 }
 
-impl EvaluateHardwareFeature for X8664CPUID<1, 0, CPUID_REG_ECX, 12> {
-    type EnabledStatic = B1;
-    type MustCheck = B1;
-    type Name = &'static str;
+define_x8664_feature!(CpuIdFma, B1, "fma");
 
-    fn name() -> Self::Name {
-        "fma"
-    }
+define_x8664_feature!(CpuIdAvx2, B1, "avx2");
 
-    fn met_runtime() -> bool {
-        Self::test_runtime()
-    }
-}
+define_x8664_feature!(CpuIdAvx512f, B0, "avx512f");
 
-/// Type alias for FMA feature.
-pub type CpuIdFma = X8664CPUID<1, 0, CPUID_REG_ECX, 12>;
-
-impl EvaluateHardwareFeature for X8664CPUID<7, 0, CPUID_REG_EBX, 5> {
-    type EnabledStatic = B1;
-    type MustCheck = B1;
-    type Name = &'static str;
-
-    fn name() -> Self::Name {
-        "avx2"
-    }
-
-    fn met_runtime() -> bool {
-        Self::test_runtime()
-    }
-}
-
-/// Type alias for AVX2 feature.
-pub type CpuIdAvx2 = X8664CPUID<7, 0, CPUID_REG_EBX, 5>;
-
-define_x8664_cpuid!("avx512f", 7, 0, CPUID_REG_EBX, 16);
-
-/// Type alias for AVX512F feature.
-pub type CpuIdAvx512f = X8664CPUID<7, 0, CPUID_REG_EBX, 16>;
-
-define_x8664_cpuid!("avx512vpopcntdq", 7, 0, CPUID_REG_ECX, 14);
-
-/// Type alias for AVX512VPOPCNTDQ feature.
-pub type CpuIdAvx512Vpopcntdq = X8664CPUID<7, 0, CPUID_REG_ECX, 14>;
+define_x8664_feature!(CpuIdAvx512Vpopcntdq, B0, "avx512vpopcntdq");
 
 /// Compute kernel using hand-written AVX2 intrinsics.
 ///
@@ -819,7 +758,7 @@ impl Kernel for Avx2F32Kernel {
     type InternalFloat = f32;
     type InputDimension = U512;
     type OutputDimension = U16;
-    type RequiredHardwareFeature = CpuIdAvx2;
+    type RequiredHardwareFeature = RequireCompilerTimeHardwareFeature<CpuIdAvx2, CpuIdFma>;
     type Ident = &'static str;
 
     fn ident(&self) -> &'static str {
