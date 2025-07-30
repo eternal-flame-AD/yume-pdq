@@ -9,7 +9,6 @@
         "ffi",
         "cli-bench",
         "vulkan",
-        "wasm-bindgen",
         "hpc"
     ],
     "C_Cpp.default.includePath": [

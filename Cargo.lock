@@ -250,6 +250,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1655,11 +1664,12 @@ dependencies = [
 
 [[package]]
 name = "yume-pdq"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "clap",
  "const-default",
  "core_affinity",
+ "cpufeatures",
  "criterion",
  "generic-array",
  "image 0.25.6",

@@ -77,7 +77,7 @@ pub mod alignment;
 #[cfg(any(test, all(feature = "unstable", feature = "std")))]
 pub mod testing;
 
-#[cfg(feature = "wasm-bindgen")]
+#[cfg(target_arch = "wasm32")]
 /// WASM bindings.
 /// cbindgen:ignore
 pub mod wasm;

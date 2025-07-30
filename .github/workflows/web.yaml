@@ -38,7 +38,7 @@ jobs:
         cargo install wasm-pack
     - name: Build wasm
       run: |
-        RUSTFLAGS="-Ctarget-feature=+simd128 -Copt-level=3" wasm-pack build -t web --release --features "wasm-bindgen portable-simd-fma"
+        RUSTFLAGS="-Ctarget-feature=+simd128 -Copt-level=3" wasm-pack build -t web --release --features "portable-simd-fma"
     - name: Build UI
       run: |
         cd web && rm -rf src/pkg && cp -r ../pkg src/pkg && pnpm i && pnpm build
