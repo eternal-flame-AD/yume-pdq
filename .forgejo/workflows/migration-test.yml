@@ -1,0 +1,11 @@
+on: [push]
+
+jobs:
+  system-info:
+    runs-on: codeberg-small
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Print CPU flags
+      run: |
+        cat /proc/cpuinfo
