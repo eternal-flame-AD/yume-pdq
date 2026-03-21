@@ -19,11 +19,12 @@
  * limitations under the License.
  */
 
-use core::simd::{LaneCount, Simd, Swizzle, cmp::SimdPartialOrd, num::SimdFloat};
+use core::simd::{Simd, Swizzle, cmp::SimdPartialOrd, num::SimdFloat};
 use core::{
     fmt::{Debug, Display},
     ops::BitAnd,
 };
+use std::simd::Select;
 use std::simd::num::{SimdInt, SimdUint};
 
 use generic_array::{
@@ -75,32 +76,13 @@ macro_rules! fma {
     }};
 }
 
-mod sealing {
-    pub trait Sealed {}
-}
-
 type SimdPS<const N: usize> = Simd<f32, N>;
-
-/// A private refinement trait of [`core::simd::SupportedLaneCount`] to further restrict the lane count supported.
-pub trait SupportedLaneCount: core::simd::SupportedLaneCount + sealing::Sealed {}
-
-macro_rules! supported_lane_count {
-    ($($lanes:literal),+) => {
-        $(
-            impl sealing::Sealed for LaneCount<$lanes> {}
-            impl SupportedLaneCount for LaneCount<$lanes> {}
-        )+
-    };
-}
 
 struct Pick<const I: usize, const N: usize>;
 
 impl<const I: usize, const N: usize> Swizzle<N> for Pick<I, N> {
     const INDEX: [usize; N] = [I; N];
 }
-
-// 32, 64, 128, 256, 512 bit registers
-supported_lane_count!(1, 2, 4, 8, 16);
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 /// Identification token for the portable SIMD kernel.
@@ -126,14 +108,9 @@ impl<const N: usize> Display for PortableSimdF32KernelIIdent<N> {
 ///
 /// Whether one specific stage is optimized for the custom lane counts in the const generic parameter is not part of the API guarantee.
 #[derive(Clone, Copy, Default)]
-pub struct PortableSimdF32Kernel<const N: usize>
-where
-    LaneCount<N>: SupportedLaneCount;
+pub struct PortableSimdF32Kernel<const N: usize>;
 
-impl<const N: usize> Kernel for PortableSimdF32Kernel<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
+impl<const N: usize> Kernel for PortableSimdF32Kernel<N> {
     type Buffer1WidthX = U128;
     type Buffer1LengthY = U128;
     type InternalFloat = f32;
@@ -708,8 +685,8 @@ where
                 lt_count += mask_resid_lt.to_bitmask().count_ones();
 
                 let row_bits = row.to_bits();
-                let mask_gt_bits = mask_resid_gt.to_int().cast();
-                let mask_lt_bits = mask_resid_lt.to_int().cast();
+                let mask_gt_bits = mask_resid_gt.to_simd().cast();
+                let mask_lt_bits = mask_resid_lt.to_simd().cast();
 
                 resid_sum_gt_v += SimdPS::<8>::from_bits(row_bits & mask_gt_bits);
                 resid_sum_lt_v += SimdPS::<8>::from_bits(row_bits & mask_lt_bits);
