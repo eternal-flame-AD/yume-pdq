@@ -88,9 +88,6 @@ define_x8664_feature!(CpuIdAvx512Vpopcntdq, B0, "avx512vpopcntdq");
 /// Testing shows that the difference is usually within 1 bit (out of 256) on test images.
 ///
 /// Benchmark shows a ~10x improvement throughput over the generic (auto-vectorized) implementation, ~100x over the reference implementation.
-///
-/// Note: You MUST compile with `target-feature=+avx2` (or equivalent) to use this kernel, otherwise a very slow
-/// fallback will be emitted by LLVM.
 #[derive(Clone, Copy, Default)]
 pub struct Avx2F32Kernel;
 
