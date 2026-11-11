@@ -28,7 +28,7 @@ zeroize = { version = "1.8", default-features = false }
 criterion = { version = "0.5.1", features = ["html_reports"], default-features = false, optional = true }
 wgpu = { version = "25", optional = true, default-features = false, features = ["vulkan", "wgsl"] }
 pollster = { version = "0.4", optional = true }
-rug = { version = "1.27", optional = true }
+rug = { version = "1.30", optional = true }
 clap = { version = "4.5", default-features = false, features = ["std", "help", "usage"], optional = true }
 core_affinity = { version = "0.8", optional = true }
 
@@ -37,10 +37,10 @@ wasm-bindgen = { version = "0.2", default-features = false, features = ["msrv", 
 js-sys = { version = "0.3" }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-cpufeatures = "0.2"
+cpufeatures = "0.3"
 
 [build-dependencies]
-rug = "1.27"
+rug = "1.30"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
