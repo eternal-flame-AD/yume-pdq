@@ -49,12 +49,12 @@ jobs:
         cp target/release/libyume_pdq.so ci-release/libyume_pdq_sse4.2_only.so
 
         # Portable SIMD SSE CFI
-        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
+        RUSTFLAGS="-Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Cunsafe-allow-abi-mismatch=sanitizer" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_sse4.2_only_cfi.so
         cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_sse4.2_only_cfi.a
 
         # Portable SIMD SSE CFI Binary
-        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+fxsr,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack -Cunsafe-allow-abi-mismatch=sanitizer" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-sse4.2_only-gnu-cfi
 
         # AVX2. unit test then build library
@@ -74,21 +74,21 @@ jobs:
         cp target/release/libyume_pdq.a ci-release/libyume_pdq_portable_simd.a
 
         # AVX2 CFI
-        RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi"
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi -Cunsafe-allow-abi-mismatch=sanitizer" cargo +nightly build --profile release-no-lto --lib --features "ffi"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_cfi.so
         cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_cfi.a
 
         # AVX2 CFI Binary
-        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack -Cunsafe-allow-abi-mismatch=sanitizer" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-gnu-cfi
 
         # AVX2 CFI Portable SIMD
-        RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
+        RUSTFLAGS="-Ctarget-feature=+avx2,+fma -C codegen-units=1 -C linker-plugin-lto -Zsanitizer=cfi -Cunsafe-allow-abi-mismatch=sanitizer" cargo +nightly build --profile release-no-lto --lib --features "ffi portable-simd-fma"
         cp target/release-no-lto/libyume_pdq.so ci-release/libyume_pdq_portable_simd_cfi.so
         cp target/release-no-lto/libyume_pdq.a ci-release/libyume_pdq_portable_simd_cfi.a
 
         # AVX2 CFI Portable SIMD Binary
-        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
+        RUSTFLAGS="-Cpanic=abort -Ctarget-feature=+avx2,+fma -Ccodegen-units=1 -Clinker-plugin-lto -Zsanitizer=cfi -Zsanitizer=safestack -Cunsafe-allow-abi-mismatch=sanitizer" cargo +nightly build --profile release-no-lto --bin yume-pdq --features "cli portable-simd-fma"
         cp target/release-no-lto/yume-pdq ci-release/yume-pdq-portable-simd-cfi
 
         # TODO: AVX512 build still doesn't work on GitHub Actions
