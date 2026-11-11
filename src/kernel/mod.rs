@@ -210,12 +210,17 @@ pub trait PreciseKernel: Kernel {}
 // Copied verbatim from [darwinium-com/pdqhash](https://github.com/darwinium-com/pdqhash/blob/main/src/lib.rs).
 #[allow(clippy::all, clippy::pedantic)]
 pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>, U16>) -> F {
-    let mut min = m.iter().flatten().cloned().reduce(F::min).unwrap();
-    let mut max = m.iter().flatten().cloned().reduce(F::max).unwrap();
+    let mut min = m.iter().flatten().cloned().filter(|v| v.is_finite()).reduce(F::min).unwrap_or(F::min_value());
+    let mut max = m.iter().flatten().cloned().filter(|v| v.is_finite()).reduce(F::max).unwrap_or(F::max_value());
 
     let half = (16 * 16 + 1) / 2;
+    let mut iters = 0;
     loop {
-        let guess = (min + max) / F::from(2).unwrap();
+        let mut guess = (min + max) / F::from(2).unwrap();
+        if !guess.is_finite() {
+            guess = F::zero();
+        }
+
         let mut less = 0;
         let mut greater = 0;
         let mut equal = 0;
@@ -224,12 +229,12 @@ pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>,
         for val in m.into_iter().flatten() {
             if *val < guess {
                 less += 1;
-                if *val > maxltguess {
+                if val.is_finite() && *val > maxltguess {
                     maxltguess = *val;
                 }
             } else if *val > guess {
                 greater += 1;
-                if *val < mingtguess {
+                if val.is_finite() && *val < mingtguess {
                     mingtguess = *val;
                 }
             } else {
@@ -248,6 +253,11 @@ pub(crate) fn torben_median<F: FloatCore>(m: &GenericArray<GenericArray<F, U16>,
             max = maxltguess;
         } else {
             min = mingtguess;
+        }
+
+        iters += 1;
+        if iters > 10 {
+            return guess;
         }
     }
 }
